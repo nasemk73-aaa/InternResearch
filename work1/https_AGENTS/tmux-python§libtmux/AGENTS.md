@@ -1,0 +1,539 @@
+# AGENTS.md
+
+This file provides guidance to AI agents (including Claude Code, Cursor, and other LLM-powered tools) when working with code in this repository.
+
+## CRITICAL REQUIREMENTS
+
+### Test Success
+- ALL tests MUST pass for code to be considered complete and working
+- Never describe code as "working as expected" if there are ANY failing tests
+- Even if specific feature tests pass, failing tests elsewhere indicate broken functionality
+- Changes that break existing tests must be fixed before considering implementation complete
+- A successful implementation must pass linting, type checking, AND all existing tests
+
+## Project Overview
+
+libtmux is a typed Python library that provides an Object-Relational Mapping (ORM) wrapper for interacting programmatically with [tmux](https://github.com/tmux/tmux), a terminal multiplexer.
+
+Key features:
+- Manage tmux servers, sessions, windows, and panes programmatically
+- Typed Python API with full type hints
+- Built on tmux's target and formats system
+- Powers [tmuxp](https://github.com/tmux-python/tmuxp), a tmux workspace manager
+- Provides pytest fixtures for testing with tmux
+
+## Development Environment
+
+This project uses:
+- Python 3.10+
+- [uv](https://github.com/astral-sh/uv) for dependency management
+- [ruff](https://github.com/astral-sh/ruff) for linting and formatting
+- [mypy](https://github.com/python/mypy) for type checking
+- [pytest](https://docs.pytest.org/) for testing
+  - [pytest-watcher](https://github.com/olzhasar/pytest-watcher) for continuous testing
+
+## Common Commands
+
+### Setting Up Environment
+
+```bash
+# Install dependencies
+uv pip install --editable .
+uv pip sync
+
+# Install with development dependencies
+uv pip install --editable . -G dev
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+just test
+# or directly with pytest
+uv run pytest
+
+# Run a single test file
+uv run pytest tests/test_pane.py
+
+# Run a specific test
+uv run pytest tests/test_pane.py::test_send_keys
+
+# Run tests with test watcher
+just start
+# or
+uv run ptw .
+
+# Run tests with doctests
+uv run ptw . --now --doctest-modules
+```
+
+### Linting and Type Checking
+
+```bash
+# Run ruff for linting
+just ruff
+# or directly
+uv run ruff check .
+
+# Format code with ruff
+just ruff-format
+# or directly
+uv run ruff format .
+
+# Run ruff linting with auto-fixes
+uv run ruff check . --fix --show-fixes
+
+# Run mypy for type checking
+just mypy
+# or directly
+uv run mypy src tests
+
+# Watch mode for linting (using entr)
+just watch-ruff
+just watch-mypy
+```
+
+### Development Workflow
+
+Follow this workflow for code changes:
+
+1. **Format First**: `uv run ruff format .`
+2. **Run Tests**: `uv run pytest`
+3. **Run Linting**: `uv run ruff check . --fix --show-fixes`
+4. **Check Types**: `uv run mypy`
+5. **Verify Tests Again**: `uv run pytest`
+
+### Documentation
+
+```bash
+# Build documentation
+just build-docs
+
+# Start documentation server with auto-reload
+just start-docs
+
+# Update documentation CSS/JS
+just design-docs
+```
+
+## Code Architecture
+
+libtmux follows an object-oriented design that mirrors tmux's hierarchy:
+
+```
+Server (tmux server instance)
+  └─ Session (tmux session)
+      └─ Window (tmux window)
+          └─ Pane (tmux pane)
+```
+
+### Core Modules
+
+1. **Server** (`src/libtmux/server.py`)
+   - Represents a tmux server instance
+   - Manages sessions
+   - Executes tmux commands via `tmux()` method
+   - Entry point for most libtmux interactions
+
+2. **Session** (`src/libtmux/session.py`)
+   - Represents a tmux session
+   - Manages windows within the session
+   - Provides session-level operations (attach, kill, rename, etc.)
+
+3. **Window** (`src/libtmux/window.py`)
+   - Represents a tmux window
+   - Manages panes within the window
+   - Provides window-level operations (split, rename, move, etc.)
+
+4. **Pane** (`src/libtmux/pane.py`)
+   - Represents a tmux pane (terminal instance)
+   - Provides pane-level operations (send-keys, capture, resize, etc.)
+   - Core unit for command execution and output capture
+
+5. **Common** (`src/libtmux/common.py`)
+   - Base classes and shared functionality
+   - `TmuxRelationalObject` and `TmuxMappingObject` base classes
+   - Format handling and command execution
+
+6. **Formats** (`src/libtmux/formats.py`)
+   - Tmux format string constants
+   - Used for querying tmux state
+
+7. **Neo** (`src/libtmux/neo.py`)
+   - Modern query interface and dataclass-based objects
+   - Alternative to traditional ORM-style objects
+
+8. **pytest Plugin** (`src/libtmux/pytest_plugin.py`)
+   - Provides fixtures for testing with tmux
+   - Creates temporary tmux sessions/windows/panes
+
+## Testing Strategy
+
+libtmux uses pytest for testing with custom fixtures. The pytest plugin (`pytest_plugin.py`) defines fixtures for creating temporary tmux objects for testing. These include:
+
+- `server`: A tmux server instance for testing
+- `session`: A tmux session for testing
+- `window`: A tmux window for testing
+- `pane`: A tmux pane for testing
+
+These fixtures handle setup and teardown automatically, creating isolated test environments.
+
+### Testing Guidelines
+
+1. **Use functional tests only**: Write tests as standalone functions, not classes. Avoid `class TestFoo:` groupings - use descriptive function names and file organization instead.
+
+2. **Use existing fixtures over mocks**
+   - Use fixtures from conftest.py instead of `monkeypatch` and `MagicMock` when available
+   - For libtmux, use provided fixtures: `server`, `session`, `window`, and `pane`
+   - Document in test docstrings why standard fixtures weren't used for exceptional cases
+
+3. **Preferred pytest patterns**
+   - Use `tmp_path` (pathlib.Path) fixture over Python's `tempfile`
+   - Use `monkeypatch` fixture over `unittest.mock`
+
+4. **Running tests continuously**
+   - Use pytest-watcher during development: `uv run ptw .`
+   - For doctests: `uv run ptw . --now --doctest-modules`
+
+### Example Fixture Usage
+
+```python
+def test_window_rename(window):
+    """Test renaming a window."""
+    # window is already a Window instance with a live tmux window
+    window.rename_window('new_name')
+    assert window.window_name == 'new_name'
+```
+
+## Coding Standards
+
+Key highlights:
+
+### Imports
+
+- **Use namespace imports for standard library modules**: `import enum` instead of `from enum import Enum`
+  - **Exception**: `dataclasses` module may use `from dataclasses import dataclass, field` for cleaner decorator syntax
+  - This rule applies to Python standard library only; third-party packages may use `from X import Y`
+- **For typing**, use `import typing as t` and access via namespace: `t.NamedTuple`, etc.
+- **Use `from __future__ import annotations`** at the top of all Python files
+
+### Docstrings
+
+Follow NumPy docstring style for all functions and methods:
+
+```python
+"""Short description of the function or class.
+
+Detailed description using reStructuredText format.
+
+Parameters
+----------
+param1 : type
+    Description of param1
+param2 : type
+    Description of param2
+
+Returns
+-------
+type
+    Description of return value
+"""
+```
+
+### Doctests
+
+**All functions and methods MUST have working doctests.** Doctests serve as both documentation and tests.
+
+**CRITICAL RULES:**
+- Doctests MUST actually execute - never comment out function calls or similar
+- Doctests MUST NOT be converted to `.. code-block::` as a workaround (code-blocks don't run)
+- If you cannot create a working doctest, **STOP and ask for help**
+
+**Available tools for doctests:**
+- `doctest_namespace` fixtures: `server`, `session`, `window`, `pane`, `Server`, `Session`, `Window`, `Pane`, `request`
+- Ellipsis for variable output: `# doctest: +ELLIPSIS`
+- Update `conftest.py` to add new fixtures to `doctest_namespace`
+
+**`# doctest: +SKIP` is NOT permitted** - it's just another workaround that doesn't test anything. Use the fixtures properly - tmux is required to run tests anyway.
+
+**Using fixtures in doctests:**
+```python
+>>> server.new_session(session_name='my_session')  # server from doctest_namespace
+Session($... my_session)
+>>> session.new_window(window_name='my_window')  # session from doctest_namespace
+Window(@... ...:my_window, Session($... ...))
+>>> pane.send_keys('echo hello')  # pane from doctest_namespace
+>>> pane.capture_pane()  # doctest: +ELLIPSIS
+[...'echo hello'...]
+```
+
+**When output varies, use ellipsis:**
+```python
+>>> window.window_id  # doctest: +ELLIPSIS
+'@...'
+>>> session.session_id  # doctest: +ELLIPSIS
+'$...'
+```
+
+**Additional guidelines:**
+1. **Use narrative descriptions** for test sections rather than inline comments
+2. **Move complex examples** to dedicated test files at `tests/examples/<path_to_module>/test_<example>.py`
+3. **Keep doctests simple and focused** on demonstrating usage
+4. **Add blank lines between test sections** for improved readability
+
+### Logging Standards
+
+These rules guide future logging changes; existing code may not yet conform.
+
+#### Logger setup
+
+- Use `logging.getLogger(__name__)` in every module
+- Add `NullHandler` in library `__init__.py` files
+- Never configure handlers, levels, or formatters in library code — that's the application's job
+
+#### Structured context via `extra`
+
+Pass structured data on every log call where useful for filtering, searching, or test assertions.
+
+**Core keys** (stable, scalar, safe at any log level):
+
+| Key | Type | Context |
+|-----|------|---------|
+| `tmux_cmd` | `str` | tmux command line |
+| `tmux_subcommand` | `str` | tmux subcommand (e.g. `new-session`) |
+| `tmux_target` | `str` | tmux target specifier (e.g. `mysession:1.2`) |
+| `tmux_exit_code` | `int` | tmux process exit code |
+| `tmux_session` | `str` | session name |
+| `tmux_window` | `str` | window name or index |
+| `tmux_pane` | `str` | pane identifier |
+| `tmux_option_key` | `str` | tmux option name |
+
+**Heavy/optional keys** (DEBUG only, potentially large):
+
+| Key | Type | Context |
+|-----|------|---------|
+| `tmux_stdout` | `list[str]` | tmux stdout lines (truncate or cap; `%(tmux_stdout)s` produces repr) |
+| `tmux_stderr` | `list[str]` | tmux stderr lines (same caveats) |
+| `tmux_stdout_len` | `int` | number of stdout lines |
+| `tmux_stderr_len` | `int` | number of stderr lines |
+
+Treat established keys as compatibility-sensitive — downstream users may build dashboards and alerts on them. Change deliberately.
+
+#### Key naming rules
+
+- `snake_case`, not dotted; `tmux_` prefix
+- Prefer stable scalars; avoid ad-hoc objects
+- Heavy keys (`tmux_stdout`, `tmux_stderr`) are DEBUG-only; consider companion `tmux_stdout_len` fields or hard truncation (e.g. `stdout[:100]`)
+
+#### Lazy formatting
+
+`logger.debug("msg %s", val)` not f-strings. Two rationales:
+- Deferred string interpolation: skipped entirely when level is filtered
+- Aggregator message template grouping: `"Running %s"` is one signature grouped ×10,000; f-strings make each line unique
+
+When computing `val` itself is expensive, guard with `if logger.isEnabledFor(logging.DEBUG)`.
+
+#### stacklevel for wrappers
+
+Increment for each wrapper layer so `%(filename)s:%(lineno)d` and OTel `code.filepath` point to the real caller. Verify whenever call depth changes.
+
+#### LoggerAdapter for persistent context
+
+For objects with stable identity (Session, Window, Pane), use `LoggerAdapter` to avoid repeating the same `extra` on every call. Lead with the portable pattern (override `process()` to merge); `merge_extra=True` simplifies this on Python 3.13+.
+
+#### Log levels
+
+| Level | Use for | Examples |
+|-------|---------|----------|
+| `DEBUG` | Internal mechanics, tmux I/O | tmux command + stdout, format queries |
+| `INFO` | Object lifecycle, user-visible operations | Session created, window added |
+| `WARNING` | Recoverable issues, deprecation | Deprecated method, missing optional program |
+| `ERROR` | Failures that stop an operation | tmux command failed, invalid target |
+
+#### Message style
+
+- Lowercase, past tense for events: `"session created"`, `"tmux command failed"`
+- No trailing punctuation
+- Keep messages short; put details in `extra`, not the message string
+
+#### Exception logging
+
+- Use `logger.exception()` only inside `except` blocks when you are **not** re-raising
+- Use `logger.error(..., exc_info=True)` when you need the traceback outside an `except` block
+- Avoid `logger.exception()` followed by `raise` — this duplicates the traceback. Either add context via `extra` that would otherwise be lost, or let the exception propagate
+
+#### Testing logs
+
+Assert on `caplog.records` attributes, not string matching on `caplog.text`:
+- Scope capture: `caplog.at_level(logging.DEBUG, logger="libtmux.common")`
+- Filter records rather than index by position: `[r for r in caplog.records if hasattr(r, "tmux_cmd")]`
+- Assert on schema: `record.tmux_exit_code == 0` not `"exit code 0" in caplog.text`
+- `caplog.record_tuples` cannot access extra fields — always use `caplog.records`
+
+#### Avoid
+
+- f-strings/`.format()` in log calls
+- Unguarded logging in hot loops (guard with `isEnabledFor()`)
+- Catch-log-reraise without adding new context
+- `print()` for diagnostics
+- Logging secret env var values (log key names only)
+- Non-scalar ad-hoc objects in `extra`
+- Requiring custom `extra` fields in format strings without safe defaults (missing keys raise `KeyError`)
+
+### Git Commit Standards
+
+Format commit messages as:
+```
+Scope(type[detail]): concise description
+
+why: Explanation of necessity or impact.
+what:
+- Specific technical changes made
+- Focused on a single topic
+```
+
+Common commit types:
+- **feat**: New features or enhancements
+- **fix**: Bug fixes
+- **refactor**: Code restructuring without functional change
+- **docs**: Documentation updates
+- **chore**: Maintenance (dependencies, tooling, config)
+- **test**: Test-related updates
+- **style**: Code style and formatting
+- **py(deps)**: Dependencies
+- **py(deps[dev])**: Dev Dependencies
+- **ai(rules[AGENTS])**: AI rule updates
+- **ai(claude[rules])**: Claude Code rules (CLAUDE.md)
+- **ai(claude[command])**: Claude Code command changes
+
+Example:
+```
+Pane(feat[send_keys]): Add support for literal flag
+
+why: Enable sending literal characters without tmux interpretation
+what:
+- Add literal parameter to send_keys method
+- Update send_keys to pass -l flag when literal=True
+- Add tests for literal key sending
+```
+For multi-line commits, use heredoc to preserve formatting:
+```bash
+git commit -m "$(cat <<'EOF'
+feat(Component[method]) add feature description
+
+why: Explanation of the change.
+what:
+- First change
+- Second change
+EOF
+)"
+```
+
+## Documentation Standards
+
+### Code Blocks in Documentation
+
+When writing documentation (README, CHANGES, docs/), follow these rules for code blocks:
+
+**One command per code block.** This makes commands individually copyable. For sequential commands, either use separate code blocks or chain them with `&&` or `;` and `\` continuations (keeping it one logical command).
+
+**Put explanations outside the code block**, not as comments inside.
+
+Good:
+
+Run the tests:
+
+```console
+$ uv run pytest
+```
+
+Run with coverage:
+
+```console
+$ uv run pytest --cov
+```
+
+Bad:
+
+```console
+# Run the tests
+$ uv run pytest
+
+# Run with coverage
+$ uv run pytest --cov
+```
+
+### Shell Command Formatting
+
+These rules apply to shell commands in documentation (README, CHANGES, docs/), **not** to Python doctests.
+
+**Use `console` language tag with `$ ` prefix.** This distinguishes interactive commands from scripts and enables prompt-aware copy in many terminals.
+
+Good:
+
+```console
+$ uv run pytest
+```
+
+Bad:
+
+```bash
+uv run pytest
+```
+
+**Split long commands with `\` for readability.** Each flag or flag+value pair gets its own continuation line, indented. Positional parameters go on the final line.
+
+Good:
+
+```console
+$ pipx install \
+    --suffix=@next \
+    --pip-args '\--pre' \
+    --force \
+    'libtmux'
+```
+
+Bad:
+
+```console
+$ pipx install --suffix=@next --pip-args '\--pre' --force 'libtmux'
+```
+
+## Debugging Tips
+
+When stuck in debugging loops:
+
+1. **Pause and acknowledge the loop**
+2. **Minimize to MVP**: Remove all debugging cruft and experimental code
+3. **Document the issue** comprehensively for a fresh approach
+4. **Format for portability** (using quadruple backticks)
+
+## tmux-Specific Considerations
+
+### tmux Command Execution
+
+- All tmux commands go through the `cmd()` method on Server/Session/Window/Pane objects
+- Commands return a `CommandResult` object with `stdout` and `stderr`
+- Use tmux format strings to query object state (see `formats.py`)
+
+### Format Strings
+
+libtmux uses tmux's format system extensively:
+- Defined in `src/libtmux/formats.py`
+- Used to query session_id, window_id, pane_id, etc.
+- Format: `#{format_name}` (e.g., `#{session_id}`, `#{window_name}`)
+
+### Object Refresh
+
+- Objects can become stale if tmux state changes externally
+- Use refresh methods (e.g., `session.refresh()`) to update object state
+- Alternative: use `neo.py` query interface for fresh data
+
+## References
+
+- Documentation: https://libtmux.git-pull.com/
+- API Reference: https://libtmux.git-pull.com/api/
+- Architecture: https://libtmux.git-pull.com/topics/architecture/
+- tmux man page: http://man.openbsd.org/OpenBSD-current/man1/tmux.1
+- tmuxp (workspace manager): https://tmuxp.git-pull.com/

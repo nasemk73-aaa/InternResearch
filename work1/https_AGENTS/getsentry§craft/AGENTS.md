@@ -1,0 +1,138 @@
+# AGENTS.md
+
+This file provides guidance for AI coding assistants working with the Craft codebase.
+
+## Package Management
+
+- **Always use `pnpm`** for package management. Never use `npm` or `yarn`.
+- Node.js version is managed by [Volta](https://volta.sh/) (currently v22.12.0).
+- Install dependencies with `pnpm install --frozen-lockfile`.
+
+## Development Commands
+
+| Command      | Description                                 |
+| ------------ | ------------------------------------------- |
+| `pnpm build` | Build the project (outputs to `dist/craft`) |
+| `pnpm test`  | Run tests                                   |
+| `pnpm lint`  | Run ESLint                                  |
+| `pnpm fix`   | Auto-fix lint issues                        |
+
+To manually test changes:
+
+```bash
+pnpm build && ./dist/craft
+```
+
+## Code Style
+
+- **TypeScript** is used throughout the codebase.
+- **Prettier** 3.x with single quotes and no arrow parens (configured in `.prettierrc.yml`).
+- **ESLint** 9.x with flat config (`eslint.config.mjs`) using `typescript-eslint`.
+- Unused variables prefixed with `_` are allowed (e.g., `_unusedParam`).
+
+## Project Structure
+
+```
+src/
+├── __mocks__/          # Test mocks
+├── __tests__/          # Test files (*.test.ts)
+├── artifact_providers/ # Artifact provider implementations
+├── commands/           # CLI command implementations
+├── schemas/            # Zod schemas and TypeScript types for config
+├── status_providers/   # Status provider implementations
+├── targets/            # Release target implementations
+├── types/              # Shared TypeScript types
+├── utils/              # Utility functions
+├── config.ts           # Configuration loading
+├── index.ts            # CLI entry point
+└── logger.ts           # Logging utilities
+dist/
+└── craft               # Single bundled executable (esbuild output)
+```
+
+## Testing
+
+- Tests use **Vitest**.
+- Test files are located in `src/__tests__/` and follow the `*.test.ts` naming pattern.
+- Run tests with `pnpm test`.
+- Use `vi.fn()`, `vi.mock()`, `vi.spyOn()` for mocking (Vitest's mock API).
+
+## CI/CD
+
+- Main branch is `master`.
+- CI runs tests on Node.js 20 and 22.
+- Craft releases itself using its own tooling (dogfooding).
+
+## Configuration
+
+- Project configuration lives in `.craft.yml` at the repository root.
+- The configuration schema is defined in `src/schemas/`.
+
+## Dry-Run Mode
+
+Craft supports a `--dry-run` flag that prevents destructive operations. This is implemented via a centralized abstraction layer.
+
+### How It Works
+
+Instead of checking `isDryRun()` manually in every function, destructive operations are wrapped with dry-run-aware proxies:
+
+- **Git operations**: Use `getGitClient()` from `src/utils/git.ts` or `createGitClient(directory)` for working with specific directories
+- **GitHub API**: Use `getGitHubClient()` from `src/utils/githubApi.ts`
+- **File writes**: Use `safeFs` from `src/utils/dryRun.ts`
+- **Other actions**: Use `safeExec()` or `safeExecSync()` from `src/utils/dryRun.ts`
+
+### ESLint Enforcement
+
+ESLint rules prevent direct usage of raw APIs:
+
+- `no-restricted-imports`: Blocks direct `simple-git` imports
+- `no-restricted-syntax`: Blocks `new Octokit()` instantiation
+
+If you're writing a wrapper module that needs raw access, use:
+
+```typescript
+// eslint-disable-next-line no-restricted-imports -- This is the wrapper module
+import simpleGit from 'simple-git';
+```
+
+### Adding New Destructive Operations
+
+When adding new code that performs destructive operations:
+
+1. **Git**: Get the git client via `getGitClient()` or `createGitClient()` - mutating methods are automatically blocked
+2. **GitHub API**: Get the client via `getGitHubClient()` - `create*`, `update*`, `delete*`, `upload*` methods are automatically blocked
+3. **File writes**: Use `safeFs.writeFile()`, `safeFs.unlink()`, etc. instead of raw `fs` methods
+4. **Other**: Wrap with `safeExec(action, description)` for custom operations
+
+### Special Cases
+
+Some operations need explicit `isDryRun()` checks:
+
+- Commands with their own `--dry-run` flag (e.g., `dart pub publish --dry-run` in pubDev target)
+- Operations that need to return mock data in dry-run mode
+- User experience optimizations (e.g., skipping sleep timers)
+
+<!-- This section is maintained by the coding agent via lore (https://github.com/BYK/opencode-lore) -->
+
+## Long-term Knowledge
+
+### Architecture
+
+<!-- lore:019cb31a-14ce-7892-b22a-0327cfcebc13 -->
+
+- **Registry target: repo_url auto-derived from git remote, not user-configurable**: \`repo_url\` in registry manifests is always set by Craft as \`https://github.com/${owner}/${repo}\`. Resolution: (1) explicit \`github: { owner, repo }\` in \`.craft.yml\` (rare), (2) fallback: auto-detect from git \`origin\` remote URL via \`git-url-parse\` library (\`git.ts:194-217\`, \`config.ts:286-316\`). Works with HTTPS and SSH remote URLs. Always overwritten on every publish — existing manifest values are replaced (\`registry.ts:417-418\`). Result is cached globally with \`Object.freeze\`. If remote isn't \`github.com\` and no explicit config exists, throws \`ConfigurationError\`. Most repos need no configuration — the git origin remote is sufficient.
+
+<!-- lore:019cb31a-14c8-7ba9-b1c4-81b2e8bf7e85 -->
+
+- **Registry target: urlTemplate generates artifact download URLs in manifest**: \`urlTemplate\` in the registry target config generates download URLs for release artifacts in the registry manifest's \`files\` field. Uses Mustache rendering with variables \`{{version}}\`, \`{{file}}\`, \`{{revision}}\`. Primarily useful for apps (standalone binaries) and CDN-hosted assets — SDK packages published to public registries (npm, PyPI, gem) typically don't need it. If neither \`urlTemplate\` nor \`checksums\` is configured, Craft skips adding file data entirely (warns at \`registry.ts:341-349\`). Real-world pattern: \`https://downloads.sentry-cdn.com/\<product>/{{version}}/{{file}}\`.
+
+### Gotcha
+
+<!-- lore:019c9f57-aa0c-7a2a-8a10-911b13b48fc0 -->
+
+- **ESM modules prevent vi.spyOn of child_process.spawnSync — use test subclass pattern**: In ESM (Vitest or Bun), you cannot \`vi.spyOn\` exports from Node built-in modules — throws 'Module namespace is not configurable'. Workaround: create a test subclass that overrides the method calling the built-in and injects controllable values. \`vi.mock\` at module level works but affects all tests in the file.
+
+<!-- lore:019c9be1-33d1-7b6e-b107-ae7ad42a4ea4 -->
+
+- **pnpm overrides with >= can cross major versions — use ^ to constrain**: pnpm overrides gotchas: (1) \`>=\` crosses major versions — use \`^\` to constrain within same major. (2) Version-range selectors don't reliably force re-resolution of compatible transitive deps; use blanket overrides when safe. (3) Overrides become stale — audit with \`pnpm why \<pkg>\` after dependency changes. (4) Never manually resolve pnpm-lock.yaml conflicts — \`git checkout --theirs\` then \`pnpm install\` to regenerate deterministically.
+<!-- End lore-managed section -->

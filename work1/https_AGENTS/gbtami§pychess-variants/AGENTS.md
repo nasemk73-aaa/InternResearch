@@ -1,0 +1,162 @@
+# AGENTS.md
+
+## Project Overview
+
+Pychess-variants is a free, open-source chess server for playing chess variants. It's a full-stack web application with:
+
+- **Backend**: Python with aiohttp web framework, MongoDB for data persistence
+- **Frontend**: TypeScript compiled with esbuild, using Snabbdom virtual DOM
+- **Chess Engine**: Fairy-Stockfish and fairy-stockfish.wasm for move validation and AI
+- **Board Library**: chessgroundx (fork of lichess chessground)
+
+## Essential Commands
+
+### Development Setup
+```bash
+# Install dependencies
+pip3 install .[dev] --user
+yarn install
+
+# Development build (with sourcemaps)
+yarn dev
+
+# Production build (minified)
+yarn prod
+
+# Compile markdown docs to HTML
+yarn md
+
+# Start development server
+python3 server/server.py
+```
+
+### Testing and Quality
+Note: Always run all linting and testing commands for any change.
+Note: When running pyright in a sandboxed Codex environment, request escalated permissions so pyright can read the system Python search paths (e.g., `/usr/lib/python3.13`, site-packages) and match CI behavior.
+Note: Codex may run test and typecheck commands with escalated permissions by default in this repo when sandbox limits would otherwise break them (for example local socket bind restrictions in aiohttp/playwright tests). Do not stop to ask in chat first; request escalation directly through the tool.
+Note: When escalation approval is needed, prefer reusable prefix approvals so repeated test runs do not prompt again (`pyright`, `python -m unittest`, `python -m pytest`, `python -m playwright install`).
+```bash
+# Run TypeScript type checking
+yarn typecheck
+
+# Run JavaScript/TypeScript tests
+yarn test
+
+# Python formatting
+ruff format .
+
+# Python linting
+ruff check .
+
+# Python type checking
+pyright
+
+# Python unit tests
+PYTHONPATH=server python -m unittest discover -s tests
+
+# Python unit tests (quiet summary, full output in /tmp/unittest_full.log)
+PYTHONPATH=server python -m unittest discover -s tests > /tmp/unittest_full.log 2>&1; echo EXIT:$?; rg -n "^Ran [0-9]+ tests|^OK$|^FAILED \\(|^ERROR:|^FAIL:" /tmp/unittest_full.log | tail -n 20
+
+# Python Playwright tests
+# Run tests directly. If browsers are missing, install them first.
+# Avoid --with-deps unless you are provisioning a fresh host with sudo access.
+python -m playwright install
+PYTHONPATH=server python -m pytest tests/test_e2e.py
+PYTHONPATH=server python -m pytest tests/test_gui.py
+```
+
+Note: `unittest -q/-b` still produces noisy output in this repo because tests initialize the application logger. Use the redirected command above for low-noise runs, then open `/tmp/unittest_full.log` when you need full details.
+
+Playwright setup tips:
+- The `--with-deps` install uses apt and needs sudo; avoid it unless you are provisioning a fresh host.
+- If browsers are already installed, you can skip `python -m playwright install`.
+- Tests spin up local servers/browsers, so run them in an environment that allows opening local sockets.
+
+### Docker Development
+```bash
+# Run entire stack with docker-compose
+docker compose up --build
+```
+
+## Architecture
+
+### Server Architecture (Python)
+- **Entry point**: `server/server.py` - Main aiohttp application
+- **Routes**: `server/routes.py` - URL routing for both web and API endpoints
+- **Game logic**: `server/game.py` - Core game state management
+- **WebSocket**: `server/wsr.py` - Real-time communication for gameplay
+- **Bot API**: `server/bot_api.py` - Lichess-compatible bot API
+- **Database**: MongoDB with pymongo (async driver)
+- **Authentication**: Session-based with optional OAuth2 integration
+
+### Client Architecture (TypeScript)
+- **Entry point**: `client/main.ts` - Main application initialization
+- **Views**: Separate modules for lobby, game, analysis, tournaments, etc.
+- **Game control**: `client/gameCtrl.ts` and `client/roundCtrl.ts` for game state
+- **Board**: Uses chessgroundx for visual chess board representation
+- **Chess engine**: Integrates fairy-stockfish.wasm for client-side analysis
+
+### Chess Standards and Engine Integration
+- **Server-side engine bindings**: The server uses Fairy-Stockfish via `pyffish` Python bindings for valid move generation, validation, FEN position creation, game rule enforcement, and PGN creation.
+- **Client-side engine bindings**: The client uses `ffish-es6.js` JavaScript bindings for similar Fairy-Stockfish functionality.
+- **Standards reference**: UCI, PGN, FEN, and coordinate notation used in the codebase are documented at `https://fairy-stockfish.github.io/chess-variant-standards/`.
+
+### Key Components
+- **Variants**: Chess variant definitions in `variants.ini` and `server/variants.py`
+- **Internationalization**: `lang/` directory with gettext .po files
+- **Real-time features**: WebSocket-based for live games, spectating, chat
+- **Analysis**: Server-side Fairy-Stockfish integration + client-side WASM engine
+
+## Important Files and Directories
+
+### Configuration
+- `variants.ini` - Chess variant definitions and rules
+- `tsconfig.json` - TypeScript compiler configuration
+- `esbuild.mjs` - Frontend build configuration
+
+### Python Server
+- `server/pychess_global_app_state.py` - Global application state management
+- `server/users.py` - User management and authentication
+- `server/lobby.py` - Game lobbies and matchmaking
+- `server/tournament/` - Tournament system implementation
+
+### TypeScript Client
+- `client/variants.ts` - Client-side variant definitions
+- `client/socket/` - WebSocket communication layer
+- `client/analysis*.ts` - Analysis board functionality
+- `client/lobby/` - Lobby UI components organized by variant family
+
+## Development Patterns
+
+### Adding New Chess Variants
+1. Define variant rules in `variants.ini`
+2. Add variant metadata to `server/variants.py`
+3. Add client-side variant info to `client/variants.ts`
+4. Add piece/board graphics to `static/` if needed
+5. Create documentation in `static/docs/`
+
+### WebSocket Communication
+- Server uses `server/wsr.py` for WebSocket message handling
+- Client uses `client/socket/` for WebSocket communication
+- Messages follow a structured JSON format for different game events
+
+### Frontend Development
+- Uses Snabbdom virtual DOM (similar to React but smaller)
+- CSS organized by feature/component in `static/`
+- No framework dependencies - vanilla TypeScript with utility libraries
+
+### Testing
+- Jest for JavaScript/TypeScript unit tests in `tests/`
+- Python tests using standard unittest in `tests/`
+- Some integration tests for game scenarios
+
+## Database Schema
+- MongoDB collections for users, games, tournaments, seeks, etc.
+- Games stored with move history and metadata
+- User ratings tracked per variant using Glicko2 system (`server/glicko2/`)
+
+## Deployment
+- Heroku-ready with `Procfile` and `heroku-postbuild` script
+- Docker support via `docker-compose.yaml`
+- Static assets served from `static/` directory
+- CDN integration for piece sets and board themes

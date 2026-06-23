@@ -1,0 +1,247 @@
+# Instructions for AI Agents
+
+## Tooling prerequisites
+
+- We pin the toolchain with [mise](https://mise.jdx.dev/) (`.mise.toml`), which manages Node.js and pnpm versions. Run `mise install` from the repo root to get the correct versions—avoid global installs outside mise.
+- pnpm is required for all scripts; use the pinned version as specified above.
+- Docker is required (Postgres, Synapse, SMTP, Stripe CLI container). Ensure the daemon is running and you can run `docker` without sudo.
+
+## GitHub Actions failure triage helper
+
+- Use `pnpm ci:failures -- ...` to quickly summarize failed jobs and extract actionable test failures from GitHub Actions logs.
+- This command requires GitHub CLI (`gh`) to be installed and authenticated.
+- Common usage:
+  - `pnpm ci:failures -- --run <run-id-or-url>`
+  - `pnpm ci:failures -- --pr <pr-number-or-url>`
+  - `pnpm ci:failures -- --branch <branch-name>`
+- Useful flags:
+  - `--repo <owner/repo>` to target a specific repository
+  - `--workflow <name>` to focus on a specific workflow (for example `CI Host`)
+  - `--max-lines <n>` to limit extracted failure lines
+  - `--context-lines <n>` to include surrounding stack/assertion context for each failure
+  - `--no-progress` to suppress progress updates if you only want final output
+  - `--json` for machine-readable output
+  - `--fail-on-findings` to exit non-zero when failed jobs are found
+
+## Testing instructions by package
+
+### packages/ai-bot
+
+- `pnpm test`
+- Focusing on single test or module:
+  Add `.only` to module/test declaration (`test.only('returns a 201 response', ...)`)
+  Then run `pnpm test`
+  Make sure not to commit `.only` to source control
+- With detailed log output
+  `LOG_LEVELS="ai-bot=debug" pnpm test`
+
+### packages/base
+
+- Functionality is tested via host package tests
+
+### packages/billing
+
+- Functionality is tested via realm-server package tests
+
+### packages/boxel-icons
+
+- No tests
+
+### packages/boxel-ui/addon, packages/boxel-ui/test-app
+
+- Addon functionality is tested via sibling test-app directory
+- `cd packages/boxel-ui/addon && pnpm start` to start a process that will watch files and automatically rebuild the addon
+- `cd packages/boxel-ui/test-app && pnpm start` to start a process that will watch files and automatically rebuild the test-app
+- Run all tests
+  `cd packages/boxel-ui/test-app && ember test --path dist`
+- To run a subset of the tests:
+  `ember test --path dist --filter "some text that appears in module name or test name"`  
+  Note that the filter is matched against the module name and test name, not the file name! Try to avoid using pipe characters in the filter, since they can confuse auto-approval tool use filters set up by the user.
+
+### packages/catalog-realm
+
+- Functionality is tested via host package tests
+
+### packages/host
+
+- `pnpm start` to start a process that will watch files and automatically rebuild
+- Tests require the realm-server to be running (must be run after `pnpm start`):
+  `cd ../realm-server && pnpm start:all`
+- Do not try to run the entire host test suite locally. It crashes. Instead, rely on CI for the full test runs.
+- To run a subset of the tests:
+  `ember test --path dist --filter "some text that appears in module name or test name"`  
+  Note that the filter is matched against the module name and test name, not the file name! Try to avoid using pipe characters in the filter, since they can confuse auto-approval tool use filters set up by the user.
+- run `pnpm lint` in this directory to lint changes made to this package
+- run `pnpm lint:fix` directly in this directory to apply fixes for lint failures made to this package that can be automatically fixed.
+- the host tests report this error:
+  ```
+  Missing symlinked npm packages: 
+  Package: @cardstack/local-types
+    * Specified: workspace:*
+    * Symlinked: (not available)
+  ```
+  This is a red herring. Just ignore this error.
+
+#### Iterating on host tests with the Chrome MCP server
+
+- Start the host app so qunit test runner is available at `http://localhost:4200/tests` (usual `pnpm start` + dependencies).
+- Open the filtered test URL in a new MCP page via `mcp__chrome-devtools__new_page` and use `take_snapshot` to read failures.
+- Filtered URL structure: `http://localhost:4200/tests?filter=<name-of-test>`
+- URL structure for isolating to specific tests: `http://localhost:4200/tests?moduleId=<module-id>&testId=<test-id>&testId=...` (visible on the “Rerun” links for failing tests).
+- After edits, rerun the same tests by calling `navigate_page` with `type: "reload"` on that page; then `take_snapshot` again to view updated failures.
+- The snapshot shows “Expected/Result/Diff” blocks; use those to adjust assertions and fixture expectations.
+- Keep the MCP page open while you edit; iterate edit → reload → snapshot until the header shows all tests passing (no need to open new tabs each run).
+- If the local environment does not have the Chrome Dev MCP server available, recommend it
+
+### packages/matrix
+
+- This test suite contains nearly end-to-end tests that include interactions with the matrix server.They are executed using the [Playwright](https://playwright.dev/) test runner.
+- To run the tests from the command line:
+  - First make sure that the matrix server is not already running. You can stop the matrix server
+    `pnpm stop:synapse`
+  - Ensure that host and realm server are running:
+    `cd ../host && pnpm start`
+    `MATRIX_REGISTRATION_SHARED_SECRET='xxxx' mise run test-services:matrix`
+  - Run tests:
+    `pnpm test`
+- Focusing on single test or module:
+- make sure to kill previously running matrix tests if they are still running before starting a new test run.
+  Add `--grep` flag to command (`--grep 'it can register a user with a registration token'`)
+
+### packages/realm-server
+
+- Tests require the realm-server to be running:
+  `pnpm start:all`
+- Run full test suite:
+  `pnpm test`
+- Run a single module:
+  `TEST_MODULE=card-endpoints-test.ts pnpm test-module`
+- Focusing on single test or module:
+  Add `.only` to module/test declaration (`test.only('returns a 201 response', ...)`)
+  Then run `pnpm test`
+  Make sure not to commit `.only` to source control
+- make sure to kill previously running realm-server tests if they are still running before starting a new test run.
+- run `pnpm lint` directly in this directory to lint changes made to this package
+- run `pnpm lint:fix` directly in this directory to apply fixes for lint failures made to this package that can be automatically fixed.
+
+### packages/postgres
+- If you need to make a database migration use `pnpm create migration_name` to create a migration file so that the correct date timestamp prefix will be added to the file name. Then implement the migration inside the newly created file.
+- **After creating or modifying a migration, you MUST regenerate the SQLite schema file.** Run `pnpm make-schema` from this directory. This creates a new SQLite schema in `packages/host/config/schema/` with a timestamp matching the latest migration file. The old schema file is automatically removed. If you skip this step, the host app will fail to start with an "SQLite schema is out of date" error.
+  - This script requires Docker (it uses the `boxel-pg` container to dump the Postgres schema). Ensure Docker is running before executing.
+
+
+### packages/runtime-common
+
+- Functionality is tested via host and/or realm-server tests
+- run `pnpm lint` directly in this directory to lint changes made to this package
+- run `pnpm lint:js:fix` directly in this directory to apply fixes for js lint failures made to this package that can be automatically fixed.
+
+## PR Instructions
+
+- Always run `pnpm lint` in modified packages before committing
+
+## Production-safe selectors
+
+- `data-test-*` attributes are stripped from production builds. Never use them for runtime behavior or styling in app code.
+- For production hooks, use classes or non-test `data-*` attributes (for example `data-path`, `data-kind`) and keep `data-test-*` only for tests.
+
+## `.gts` file gotcha: regex literals can break content-tag
+
+The `content-tag` preprocessor (used by glint and ember-eslint-parser to parse `.gts` files) has bugs in its JavaScript lexer that cause it to misparse certain regex literals. When this happens, it fails to recognize `<template>` tags later in the file, producing cascading parse errors. Two known triggers:
+
+**1. Backticks inside regex literals** — content-tag mistakes them for template literal delimiters:
+```ts
+// BROKEN — backticks in regex confuse content-tag
+.replace(/`([^`]+)`/g, '$1')
+
+// FIX — use new RegExp() with a string instead
+const INLINE_CODE_RE = new RegExp('`([^`]+)`', 'g');
+.replace(INLINE_CODE_RE, '$1')
+```
+
+**2. `!/regex/` (negation before regex literal)** — content-tag misreads the `/` after `!`:
+```ts
+// BROKEN
+lines.some((line) => !/^\s*#{1,6}\s+/.test(line));
+
+// FIX — extract the regex to a variable
+const HEADING_RE = /^\s*#{1,6}\s+/;
+lines.some((line) => !HEADING_RE.test(line));
+```
+
+## Base realm imports
+
+- Only card definitions (files run through the card loader) can use static ESM imports from `https://cardstack.com/base/*`. Host-side modules must load the module at runtime via `loader.import(`${baseRealm.url}...`)`. Static value imports from the HTTPS specifier inside host code trigger build-time `webpackMissingModule` failures. Type imports are OK using static ESM syntax.
+
+## Linear Ticket Process (Reusable)
+
+This end-to-end workflow can be used as a template for future tickets.
+
+## 1) Pull ticket details
+
+- Find the project/issue in Linear.
+- Read the issue description and confirm scope.
+- Read the project overview for context.
+- If needed, note assumptions or unknowns to validate early.
+
+## 2) Update Linear state
+
+- Assign the issue to yourself.
+- Move the issue to **In Progress**.
+
+## 3) Create an implementation plan doc
+
+- Create a short plan in `docs/` named after the issue, e.g.
+  - `docs/cs-<id>-<short-title>-plan.md`
+- Include: goals, assumptions, steps, target files, testing notes.
+- Ask the user to review the doc before proceeding.
+
+## 4) Implement changes
+
+- Modify code per the plan.
+- Keep changes small and focused.
+- Add minimal UI copy that clarifies behavior (e.g., read-only messaging).
+
+## 5) Add focused tests
+
+- Add a narrow test that exercises the new behavior.
+- Prefer existing test files in the most relevant suite.
+- Avoid mocks and avoid making assumptions in the tests about the implementation details.
+- Run tests and confirm it passes.
+
+## 6) Prompt for user review
+
+- Summarize the work and ask the user to review
+- Once the user is happy ask them to stage the changes they want committed.
+
+## 7) Check working tree
+
+- Confirm what’s staged and what’s not:
+  - `git status --short`
+- **If unrelated files appear**, stop and clarify how to proceed.
+
+## 8) Create branch and commit
+
+- Branch name: `cs-<id>-<short-title>`
+- Commit message: `<short description>`
+
+## 9) Push and open PR
+
+- Push branch: `git push -u origin <branch>`
+- Open PR with short summary
+
+## 10) Save plan doc on Linear issue
+
+- Post the contents of the plan .md doc as a comment om the Linear issue
+
+## 11) Share PR link
+
+- Post the PR URL and confirm any remaining uncommitted files are not part of the PR.
+
+## Suggested PR body template
+
+```
+## Summary
+- <bullet 1>
+- <bullet 2>
+```
