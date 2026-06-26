@@ -4,18 +4,22 @@
 ・Repository 2 1 3 2
 ・Other Website 4
 (Official Website 1  Translation Platform 2 Security 1)
+リポジトリAzure$GPT-RAGまで分類済み
+
+⚪︎CLAUDE.md
+・API Endpoint 2 1 1 1 1
+・Documentation 2 1 1 2 2 1 1 1 1
+・Repository 1 1 1
+・Other Website 1 1 1 2 1
+(Official Website 1 Cloud Service 1)
+・リンク切れ(Error loading page) 2 1
+リポジトリAzure$LogicAppsUXのapps/StandaloneのCLAUDE.mdまで分類
 
 
+・Documentation
+→公式マニュアル，チュートリアル，コマンドリファレンス，インストール方法，仕様書参照
+(をまとめた公式ドキュメントサイト)
 
-
-
-
-
-
-
-
-
-
-API Endpoint
+・API Endpoint
 →外部のシステムやアプリとデータ通信を行うための「APIの入口(URL)」のこと．
  API通信は，クライアントからサーバへ通信が行われる．リクエストの到達地点(ポイント)であることからエンドポイントと言われる．
