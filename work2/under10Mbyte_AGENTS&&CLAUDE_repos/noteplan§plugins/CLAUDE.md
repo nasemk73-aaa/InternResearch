@@ -1,0 +1,35 @@
+# NOTEPLAN PLUGINS DEVELOPMENT GUIDE
+
+## Build/Test Commands
+- Build plugin: `npc plugin:dev <plugin-id> -nc`
+- Build react runtime: `node ./<plugin-id>/src/react/support/performRollup.node.js`
+- Lint code: `npm run lint` or fix issues with `npm run lint-fix`
+- Type check: `npm run typecheck`
+- Run all tests: `npm run test`
+- Run single test: `npx jest path/to/file.test.js -t "test name"`
+- Watch tests: `npm run test:watch`
+- Development mode: `npm run dev`
+
+## Code Style Guidelines
+- Use Flow for static typing
+- No semicolons (enforced by ESLint/Prettier)
+- Single quotes for strings
+- Max line length: 180 characters
+- Use template literals instead of string concatenation
+- Use ES6+ features (const/let, arrow functions)
+- Use async/await and handle promises properly (no floating promises)
+- Follow existing naming patterns in the codebase
+- Proper error handling with try/catch blocks
+- Follow import order: external libs -> internal libs -> local files
+- Keep code DRY and modular with clear function responsibilities
+- Use JSDoc comments for public functions
+- Always research the `helpers/` folder before writing new code
+- Prefer writing explicit functions over constant declarations
+
+## Common Helper Functions
+The most frequently used functions in the codebase are:
+- Logging: logDebug, logError, clo, logInfo, logWarn
+- Note utilities: findNote, getParagraphs, getSelectedParagraphs, getTasksFromNote
+- Date handling: getTodaysDateHyphenated, getDateStringFromCalendarFilename
+- Configuration: getSettings, updateSettingsForPlugin
+- UI interaction: showMessage, showMessageYesNo, displayTitle

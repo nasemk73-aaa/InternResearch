@@ -1,0 +1,169 @@
+# Development Guidelines
+
+## General Development Guidelines
+
+- Auto-format code with `ddev test -fs`.
+
+## Python Type Hinting
+
+### Generating new code
+
+When generating python code, always add type hinting to the methods. Use modern syntaxis, for example, instead of using `Optional[str]` use `str | None` and instead of using `List[str]` use `list[str]`.
+
+If a method yields a value but we are not returning anything or we do not accept anything sent to the generator, it is better to type the method as Iterator to explicitely expose the API of the method as simply something the caller can iterate over.
+
+### Refactoring code
+
+When refactoring existing code, never add type hints to method that are not type hinted unless asked explicitely.
+
+### The case of AnyStr
+
+AnyStr is normally used to define the type of a variable that can be either a string or bytes. This is soon to be deprecated and, instead, type parameter lits are a better solution. If AnyStr is used as type of several arguments in a given method signature, it is better to use type parameter lists and define the function as a generic function.
+
+```python
+# Soon to be deprecated
+def func(a: AnySTr, b: AnyStr):
+    pass
+
+# Preferred
+def func[T: (str, bytes)](a: T, b: T):
+    pass
+```
+
+This way, whether a and b are either strings or bytes, they cannot be mixed.
+
+If a single argument is present in the function, `str | bytes` is preferred.
+
+## Code Style and Organization
+
+### Docstrings
+
+- Use concise one-liner docstrings for most methods
+- Method names should be self-descriptive
+- Multi-line docstrings with Args/Returns are acceptable only for important public interface methods that require detailed documentation
+- Avoid verbose docstrings for internal/private methods
+
+### Comments
+
+- Avoid unnecessary inline comments
+- Write self-explanatory code instead
+- If a comment is needed, keep it to one line
+- Code clarity should come from descriptive names, not comments
+
+### Code Duplication
+
+- Extract helper functions to eliminate duplicated logic
+- Small, focused functions with descriptive names are better than repeated code blocks
+- Reusable helpers improve maintainability and reduce the need for comments
+
+## Configuration Models
+
+**Applicable to:** `**/config_models/*.py`, `*/assets/configuration/spec.yaml`
+
+Don't modify files in `**/config_models/*.py` directly. To change those files edit assets/configuration/spec.yaml and then run the following commands:
+
+```shell
+ddev -x validate config -s <INTEGRATION_NAME>
+ddev -x validate models -s <INTEGRATION_NAME>
+```
+
+## Testing
+
+Run unit and integration tests with `ddev --no-interactive test <INTEGRATION>`. For example, for the pgbouncer integration, run `ddev --no-interactive test pgbouncer`.
+
+Run E2E tests by following these steps:
+
+1. List available environments for the integration:
+
+   ```shell
+   ddev env show <INTEGRATION>
+   ```
+
+2. Start a specific environment:
+
+   ```shell
+   ddev env start --dev <INTEGRATION> <ENV>
+   ```
+
+3. Run the E2E tests in that environment:
+
+   ```shell
+   ddev env test --dev <INTEGRATION> <ENV>
+   ```
+
+4. Stop the environment when done:
+   ```shell
+   ddev env stop <INTEGRATION> <ENV>
+   ```
+
+Where `<ENV>` is one of the environment names listed by the `show` command. For example, for the pgbouncer integration:
+
+```shell
+ddev env show pgbouncer
+ddev env start pgbouncer py3.11-1.23
+ddev env test --dev pgbouncer py3.11-1.23
+ddev env stop pgbouncer py3.11-1.23
+```
+
+Run specific tests with `ddev --no-interactive test <INTEGRATION> -- -k <PYTEST_FILTER_STRING>`, for example `ddev --no-interactive test kuma -- -k test_code_class_injection -s`.
+
+### Recreating Environments
+
+Add `--recreate` to recreate test environments from scratch:
+
+```shell
+# Unit/integration tests - recreates Hatch environments
+ddev test --recreate <INTEGRATION>
+
+# E2E tests - recreates both Hatch environments and Docker containers/volumes
+ddev env test --dev --recreate <INTEGRATION> <ENV>
+```
+
+For E2E tests, `--recreate` performs `docker compose down --volumes` followed by `docker compose up -d --force-recreate`.
+
+## Code Formatting
+
+Format code with `ddev test -fs <INTEGRATION>`. For example, for the pgbouncer integration, run `ddev test -fs pgbouncer`.
+
+## Changelog Management
+
+Changelog entries are required for all Python changes in `datadog_checks` subdirectories. Changelog entries are not required for changes in tests or assets.
+
+**IMPORTANT:** Changelog files MUST be created using the `ddev release changelog new` command. Do not create or edit changelog files manually.
+
+Changelog files are named `<PR_NUMBER>.<TYPE>` and placed in the integration's `changelog.d/` directory.
+
+### Version Bumping Behavior
+
+- `fixed` - Bug fixes. Bumps the **patch** version (e.g., 1.0.0 → 1.0.1)
+- `added` - New features. Bumps the **minor** version (e.g., 1.0.0 → 1.1.0)
+- `changed` - Breaking changes or significant modifications. Bumps the **major** version (e.g., 1.0.0 → 2.0.0)
+
+### Command Format
+
+`ddev release changelog new <TYPE> <INTEGRATION> -m "<MESSAGE>"`
+
+### Examples
+
+```shell
+# New feature
+ddev release changelog new added kafka_consumer -m "Bump OpenSSL in confluent-kafka to 3.4.1 on Windows."
+
+# Bug fix
+ddev release changelog new fixed sqlserver -m "Fix a bug where ``tempdb`` is wrongly excluded from database files metrics due to all instances inherited from ``SqlserverDatabaseMetricsBase`` share the same reference of auto-discovered databases."
+
+# Breaking change
+ddev release changelog new changed postgres -m "Update configuration options for connection pooling."
+```
+
+## Documentation
+
+### New files added
+
+When a new file is added make sure to make it available through the navigation configuration in the mkdocs file. If it is not clear where it should go, ask.
+
+### Style
+
+Maintain style consistent. The style should be technical and professional.
+
+Do not start lines/paragraphs with an inline code.

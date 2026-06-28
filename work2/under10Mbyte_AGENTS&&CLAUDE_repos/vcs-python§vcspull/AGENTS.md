@@ -1,0 +1,495 @@
+# AGENTS.md
+
+This file provides guidance to LLM Agents such as Codex, Gemini, Claude Code (claude.ai/code), etc. when working with code in this repository.
+
+## CRITICAL REQUIREMENTS
+
+### Test Success
+- ALL tests MUST pass for code to be considered complete and working
+- Never describe code as "working as expected" if there are ANY failing tests
+- Even if specific feature tests pass, failing tests elsewhere indicate broken functionality
+- Changes that break existing tests must be fixed before considering implementation complete
+- A successful implementation must pass linting, type checking, AND all existing tests
+
+## Project Overview
+
+vcspull is a Python tool for managing and synchronizing multiple git, svn, and mercurial repositories via YAML or JSON configuration files. It allows users to pull/update multiple repositories in a single command, optionally filtering by repository name, path, or VCS URL.
+
+## Development Environment
+
+### Setup and Installation
+
+```bash
+# Install development dependencies with uv
+uv pip install -e .
+
+# Alternative: Use uv sync to install from pyproject.toml
+uv sync
+```
+
+### Common Commands
+
+#### Testing
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run specific test(s)
+uv run pytest tests/test_cli.py
+uv run pytest tests/test_cli.py::test_sync
+
+# Watch mode for tests (auto re-run on file changes)
+uv run ptw .
+# or
+just start
+
+# Run tests with coverage
+uv run py.test --cov -v
+```
+
+#### Code Quality
+
+```bash
+# Format code with ruff
+uv run ruff format .
+# or
+just ruff-format
+
+# Run ruff linting with auto-fixes
+uv run ruff check . --fix --show-fixes
+# or
+just ruff
+
+# Run mypy type checking
+uv run mypy
+# or
+just mypy
+
+# Watch mode for linting (using entr)
+just watch-ruff
+just watch-mypy
+```
+
+#### Documentation
+
+```bash
+# Build documentation
+just build-docs
+
+# Start documentation server (auto-reload)
+just start-docs
+```
+
+## Development Process
+
+Follow this workflow for code changes:
+
+1. **Format First**: `uv run ruff format .`
+2. **Run Tests**: `uv run py.test`
+3. **Run Linting**: `uv run ruff check . --fix --show-fixes`
+4. **Check Types**: `uv run mypy`
+5. **Verify Tests Again**: `uv run py.test`
+
+## Code Architecture
+
+### Core Components
+
+1. **Configuration**
+   - `config.py`: Handles loading and parsing of YAML/JSON configuration files
+   - `_internal/config_reader.py`: Low-level config file reading
+
+2. **CLI**
+   - `cli/__init__.py`: Main CLI entry point with argument parsing
+   - `cli/sync.py`: Repository synchronization functionality
+   - `cli/add.py`: Adding new repositories to configuration
+
+3. **Repository Management**
+   - Uses `libvcs` package for VCS operations (git, svn, hg)
+   - Supports custom remotes and URL schemes
+
+### Configuration Format
+
+Configuration files are stored as YAML or JSON in either:
+- `~/.vcspull.yaml`/`.json` (home directory)
+- `~/.config/vcspull/` directory (XDG config)
+
+Example format:
+```yaml
+~/code/:
+  flask: "git+https://github.com/mitsuhiko/flask.git"
+~/study/c:
+  awesome: "git+git://git.naquadah.org/awesome.git"
+```
+
+## Coding Standards
+
+### Imports
+
+- Use namespace imports for stdlib: `import enum` instead of `from enum import Enum`; third-party packages may use `from X import Y`
+- For typing, use `import typing as t` and access via namespace: `t.NamedTuple`, etc.
+
+**For third-party packages:** Use idiomatic import styles for each library (e.g., `from pygments.token import Token` is fine).
+
+**Always:** Use `from __future__ import annotations` at the top of all Python files.
+
+### Docstrings
+
+Follow NumPy docstring style for all functions and methods:
+
+```python
+"""Short description of the function or class.
+
+Detailed description using reStructuredText format.
+
+Parameters
+----------
+param1 : type
+    Description of param1
+param2 : type
+    Description of param2
+
+Returns
+-------
+type
+    Description of return value
+"""
+```
+
+### Doctests
+
+**All functions and methods MUST have working doctests.** Doctests serve as both documentation and tests.
+
+**CRITICAL RULES:**
+- Doctests MUST actually execute - never comment out function calls or similar
+- Doctests MUST NOT be converted to `.. code-block::` as a workaround (code-blocks don't run)
+- If you cannot create a working doctest, **STOP and ask for help**
+
+**Available tools for doctests:**
+- `doctest_namespace` fixtures (inherited from libvcs): `tmp_path`, `create_git_remote_repo`, `create_hg_remote_repo`, `create_svn_remote_repo`
+- Ellipsis for variable output: `# doctest: +ELLIPSIS`
+- Update `conftest.py` to add new fixtures to `doctest_namespace`
+
+**`# doctest: +SKIP` is NOT permitted** - it's just another workaround that doesn't test anything. If a VCS binary might not be installed, pytest already handles skipping via `skip_if_binaries_missing`. Use the fixtures properly.
+
+**Using fixtures in doctests:**
+```python
+>>> from vcspull.config import extract_repos
+>>> config = {'~/code/': {'myrepo': 'git+https://github.com/user/repo'}}
+>>> repos = extract_repos(config)  # doctest: +ELLIPSIS
+>>> len(repos)
+1
+```
+
+**When output varies, use ellipsis:**
+```python
+>>> repo_dir = tmp_path / 'repo'  # tmp_path from doctest_namespace
+>>> repo_dir.mkdir()
+>>> repo_dir  # doctest: +ELLIPSIS
+PosixPath('.../repo')
+```
+
+### Logging Standards
+
+These rules guide future logging changes; existing code may not yet conform.
+
+#### Logger setup
+
+- Use `logging.getLogger(__name__)` in every module
+- Add `NullHandler` in library `__init__.py` files
+- Never configure handlers, levels, or formatters in library code — that's the application's job
+
+#### Structured context via `extra`
+
+Pass structured data on every log call where useful for filtering, searching, or test assertions.
+
+**Core keys** (stable, scalar, safe at any log level):
+
+| Key | Type | Context |
+|-----|------|---------|
+| `vcs_cmd` | `str` | VCS command line |
+| `vcs_type` | `str` | VCS type (git, svn, hg) |
+| `vcs_url` | `str` | repository URL |
+| `vcs_exit_code` | `int` | VCS process exit code |
+| `vcs_repo_path` | `str` | local repository path |
+| `vcspull_config_path` | `str` | workspace config file path |
+
+**Heavy/optional keys** (DEBUG only, potentially large):
+
+| Key | Type | Context |
+|-----|------|---------|
+| `vcs_stdout` | `list[str]` | VCS stdout lines (truncate or cap; `%(vcs_stdout)s` produces repr) |
+| `vcs_stderr` | `list[str]` | VCS stderr lines (same caveats) |
+
+Treat established keys as compatibility-sensitive — downstream users may build dashboards and alerts on them. Change deliberately.
+
+#### Key naming rules
+
+- `snake_case`, not dotted; `vcs_` prefix
+- Prefer stable scalars; avoid ad-hoc objects
+- Heavy keys (`vcs_stdout`, `vcs_stderr`) are DEBUG-only; consider companion `vcs_stdout_len` fields or hard truncation (e.g. `stdout[:100]`)
+
+#### Lazy formatting
+
+`logger.debug("msg %s", val)` not f-strings. Two rationales:
+- Deferred string interpolation: skipped entirely when level is filtered
+- Aggregator message template grouping: `"Running %s"` is one signature grouped ×10,000; f-strings make each line unique
+
+When computing `val` itself is expensive, guard with `if logger.isEnabledFor(logging.DEBUG)`.
+
+#### stacklevel for wrappers
+
+Increment for each wrapper layer so `%(filename)s:%(lineno)d` and OTel `code.filepath` point to the real caller. Verify whenever call depth changes.
+
+#### LoggerAdapter for persistent context
+
+For objects with stable identity (Repository, Remote, Sync), use `LoggerAdapter` to avoid repeating the same `extra` on every call. Lead with the portable pattern (override `process()` to merge); `merge_extra=True` simplifies this on Python 3.13+.
+
+#### Log levels
+
+| Level | Use for | Examples |
+|-------|---------|----------|
+| `DEBUG` | Internal mechanics, VCS I/O | VCS command + stdout, URL parsing steps |
+| `INFO` | Repository lifecycle, user-visible operations | Repository cloned, sync completed |
+| `WARNING` | Recoverable issues, deprecation, user-actionable config | Deprecated VCS option, unrecognized remote |
+| `ERROR` | Failures that stop an operation | VCS command failed, invalid URL |
+
+Config discovery noise belongs in `DEBUG`; only surprising/user-actionable config issues → `WARNING`.
+
+#### Message style
+
+- Lowercase, past tense for events: `"repository cloned"`, `"vcs command failed"`
+- No trailing punctuation
+- Keep messages short; put details in `extra`, not the message string
+
+#### Exception logging
+
+- Use `logger.exception()` only inside `except` blocks when you are **not** re-raising
+- Use `logger.error(..., exc_info=True)` when you need the traceback outside an `except` block
+- Avoid `logger.exception()` followed by `raise` — this duplicates the traceback. Either add context via `extra` that would otherwise be lost, or let the exception propagate
+
+#### Testing logs
+
+Assert on `caplog.records` attributes, not string matching on `caplog.text`:
+- Scope capture: `caplog.at_level(logging.DEBUG, logger="vcspull.cli")`
+- Filter records rather than index by position: `[r for r in caplog.records if hasattr(r, "vcs_cmd")]`
+- Assert on schema: `record.vcs_exit_code == 0` not `"exit code 0" in caplog.text`
+- `caplog.record_tuples` cannot access extra fields — always use `caplog.records`
+
+#### Avoid
+
+- f-strings/`.format()` in log calls
+- Unguarded logging in hot loops (guard with `isEnabledFor()`)
+- Catch-log-reraise without adding new context
+- `print()` for diagnostics
+- Logging secret env var values (log key names only)
+- Non-scalar ad-hoc objects in `extra`
+- Requiring custom `extra` fields in format strings without safe defaults (missing keys raise `KeyError`)
+
+### Testing
+
+**Use functional tests only**: Write tests as standalone functions (`test_*`), not classes. Avoid `class TestFoo:` groupings - use descriptive function names and file organization instead. This applies to pytest tests, not doctests.
+
+#### Using libvcs Fixtures
+
+When writing tests, leverage libvcs's pytest plugin fixtures:
+
+- `create_git_remote_repo`, `create_svn_remote_repo`, `create_hg_remote_repo`: Factory fixtures
+- `git_repo`, `svn_repo`, `hg_repo`: Pre-made repository instances
+- `set_home`, `gitconfig`, `hgconfig`, `git_commit_envvars`: Environment fixtures
+
+Example:
+```python
+def test_vcspull_sync(git_repo):
+    # git_repo is already a GitSync instance with a clean repository
+    # Use it directly in your tests
+```
+For multi-line commits, use heredoc to preserve formatting:
+```bash
+git commit -m "$(cat <<'EOF'
+feat(Component[method]) add feature description
+
+why: Explanation of the change.
+what:
+- First change
+- Second change
+EOF
+)"
+```
+
+#### Test Structure
+
+Use `typing.NamedTuple` for parameterized tests:
+
+```python
+class CLIFixture(t.NamedTuple):
+    test_id: str  # For test naming
+    cli_args: list[str]
+    expected_exit_code: int
+    expected_in_out: ExpectedOutput = None
+
+@pytest.mark.parametrize(
+    list(CLIFixture._fields),
+    CLI_FIXTURES,
+    ids=[test.test_id for test in CLI_FIXTURES],
+)
+def test_cli_subcommands(
+    # Parameters and fixtures...
+):
+    # Test implementation
+```
+
+#### Mocking Strategy
+
+- Use `monkeypatch` for environment, globals, attributes
+- Use `mocker` (from pytest-mock) for application code
+- Document every mock with comments explaining WHAT is being mocked and WHY
+
+#### Configuration File Testing
+
+- Use project helper functions like `vcspull.tests.helpers.write_config` or `save_config_yaml`
+- Avoid direct `yaml.dump` or `file.write_text` for config creation
+
+### Git Commit Standards
+
+Format commit messages as:
+```
+Scope(type[detail]): concise description
+
+why: Explanation of necessity or impact.
+what:
+- Specific technical changes made
+- Focused on a single topic
+```
+
+The `why:` must be the pragmatic, contextual reason behind the change — never cite AGENTS.md, CLAUDE.md, or other rule files as the justification. If you feel compelled to write "AGENTS.md says..." or "CLAUDE.md requires...", look at `git log -n 10 -p`, the PR description, and the ticket for the real engineering reason (e.g., "function had no doctest coverage" not "CLAUDE.md requires doctests").
+
+Common commit types:
+- **feat**: New features or enhancements
+- **fix**: Bug fixes
+- **refactor**: Code restructuring without functional change
+- **docs**: Documentation updates
+- **chore**: Maintenance (dependencies, tooling, config)
+- **test**: Test-related updates
+- **style**: Code style and formatting
+- **ai(rules[AGENTS])**: AI rule updates
+- **ai(claude[rules])**: Claude Code rules (CLAUDE.md)
+- **ai(claude[command])**: Claude Code command changes
+
+Examples:
+```
+cli(add[repo]) Add support for custom remote URLs
+
+why: Enable users to specify alternative remote URLs for repositories
+what:
+- Add remote_url parameter to add_repo function
+- Update CLI argument parser to accept --remote-url option
+- Add tests for the new functionality
+```
+
+For docs/_ext changes, use `docs` as the top-level component:
+```
+docs(sphinx_argparse_neo[renderer]) Escape asterisks in quoted strings
+
+why: Glob patterns like "django-*" cause RST emphasis issues
+what:
+- Add _escape_glob_asterisks() helper method
+- Call it before RST parsing in _parse_text()
+```
+
+## Documentation Standards
+
+### Code Blocks in Documentation
+
+When writing documentation (README, CHANGES, docs/), follow these rules for code blocks:
+
+**One command per code block.** This makes commands individually copyable. For sequential commands, either use separate code blocks or chain them with `&&` or `;` and `\` continuations (keeping it one logical command).
+
+**Put explanations outside the code block**, not as comments inside.
+
+Good:
+
+Search for a term across all fields:
+
+```console
+$ vcspull search django
+```
+
+Search by repository name:
+
+```console
+$ vcspull search "name:flask"
+```
+
+Bad:
+
+```console
+# Search for a term across all fields
+$ vcspull search django
+
+# Search by repository name
+$ vcspull search "name:flask"
+```
+
+### Shell Command Formatting
+
+These rules apply to shell commands in documentation (README, CHANGES, docs/), **not** to Python doctests.
+
+**Use `console` language tag with `$ ` prefix.** This distinguishes interactive commands from scripts and enables prompt-aware copy in many terminals.
+
+Good:
+
+```console
+$ uv run pytest
+```
+
+Bad:
+
+```bash
+uv run pytest
+```
+
+**Split long commands with `\` for readability.** Each flag or flag+value pair gets its own continuation line, indented. Positional parameters go on the final line.
+
+Good:
+
+```console
+$ pipx install \
+    --suffix=@next \
+    --pip-args '\--pre' \
+    --force \
+    'vcspull'
+```
+
+Bad:
+
+```console
+$ pipx install --suffix=@next --pip-args '\--pre' --force 'vcspull'
+```
+
+**Prefer longform flags** — use `--workspace` not `-w`, `--file` not `-f`.
+
+**Split multi-flag commands** — when a command has 2+ flags/options, place each on its own `\`-continuation line, indented by 4 spaces.
+
+Good:
+
+```console
+$ vcspull import gh my-org \
+    --mode org \
+    --workspace ~/code/
+```
+
+Bad:
+
+```console
+$ vcspull import gh my-org --mode org -w ~/code/
+```
+
+## Debugging Tips
+
+When stuck in debugging loops:
+
+1. **Pause and acknowledge the loop**
+2. **Minimize to MVP**: Remove all debugging cruft and experimental code
+3. **Document the issue** comprehensively for a fresh approach
+4. Format for portability (using quadruple backticks)

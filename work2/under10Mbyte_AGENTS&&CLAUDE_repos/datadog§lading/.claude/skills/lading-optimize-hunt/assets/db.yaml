@@ -1,0 +1,31 @@
+entries:
+  - id: dogstatsd-buffer-reuse
+    target: dogstatsd.rs:to_bytes_unframed,to_bytes_length_prefix_framed
+    technique: buffer-reuse
+    status: success
+    verdict: approved
+    file: assets/db/dogstatsd-buffer-reuse.yaml
+  - id: syslog-to_bytes-reusable-buffer
+    target: lading_payload/src/syslog.rs::Syslog5424::to_bytes
+    technique: buffer-reuse
+    status: success
+    verdict: approved
+    file: assets/db/syslog-to_bytes-reusable-buffer.yaml
+  - id: fluent-on-demand-serialization
+    target: lading_payload/src/fluent.rs::to_bytes
+    technique: on-demand-serialization
+    status: success
+    verdict: approved
+    file: assets/db/fluent-on-demand-serialization.yaml
+  - id: payload-cache-inline
+    target: lading_payload/src/block.rs:Cache
+    technique: inline
+    status: success
+    verdict: approved
+    file: assets/db/cache-inline.yaml
+  - id: datadog-logs-buffer-reuse
+    target: lading_payload/src/datadog_logs.rs::DatadogLog::to_bytes
+    technique: buffer-reuse
+    status: success
+    verdict: approved
+    file: assets/db/datadog-logs-buffer-reuse.yaml

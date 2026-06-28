@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(investigate-cef)",
+      "Skill(investigate-jellyfin-web)",
+      "Skill(investigate-sdl)"
+    ]
+  }
+}

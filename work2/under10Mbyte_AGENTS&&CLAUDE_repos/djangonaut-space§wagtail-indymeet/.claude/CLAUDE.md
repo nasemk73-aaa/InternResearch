@@ -1,0 +1,280 @@
+# Djangonaut Space - Shared Claude Context
+
+## Project Overview
+
+Djangonaut Space is a mentoring program platform built with Django and Wagtail CMS. While it includes a Wagtail-based blog, the primary application is a Django system that manages:
+
+- **Recurring application and ranking processes** for cohort selection
+- **Session management** (cohorts/mentoring sessions) with participants, navigators, and captains
+- **Application workflows** including surveys, review, scoring, and team formation
+- **Team formation and management** with availability matching and project assignments
+- **Email notifications** throughout the application and acceptance process
+
+**Important:** This is NOT primarily a meetup site - that was the original vision but is no longer accurate. The focus is on managing cohort-based mentoring programs.
+
+## Project Structure
+
+```
+wagtail-indymeet/
+├── accounts/          # User authentication and profiles (CustomUser model)
+├── home/              # Main Django app + Wagtail pages
+│   ├── models/
+│   │   ├── session.py     # Session and SessionMembership models
+│   │   ├── event.py       # Event models
+│   │   └── resource.py    # Resource models
+│   ├── management/
+│   │   └── commands/      # Django management commands
+│   └── puput_migrations/  # Blog-specific migrations
+├── indymeet/          # Django project settings
+│   ├── settings/
+│   │   ├── base.py       # Shared settings
+│   │   ├── dev.py        # Local development
+│   │   ├── test.py       # Test settings
+│   │   └── production.py # Production settings
+│   └── templates/
+├── theme/             # Tailwind CSS theme app
+├── docs/              # Project documentation (currently sparse)
+├── tests/             # Project-level tests
+└── scripts/           # Utility scripts (e.g., local.sh)
+```
+
+## Technology Stack
+
+- **Backend:** Django 5.2, Wagtail CMS, PostgreSQL
+- **Frontend:** Tailwind CSS, Alpine.js
+- **Package Management:** uv (fast Python package installer)
+- **Deployment:** Dokku (Heroku buildpacks)
+- **Testing:** pytest, pytest-django, playwright
+- **Email:** django-anymail
+- **Blog:** Puput (integrated with Wagtail)
+
+## Development Workflow
+
+### Setup Commands
+```bash
+# Install dependencies (creates venv automatically)
+uv sync --extra dev --extra test
+
+# Database setup
+uv run python manage.py migrate
+uv run python manage.py createsuperuser
+
+# Tailwind setup
+uv run python manage.py tailwind install
+
+# Run development servers
+uv run python manage.py runserver        # Django server
+uv run python manage.py tailwind start   # Tailwind watcher (separate terminal)
+
+# Or use the convenience script (non-Windows)
+./scripts/local.sh
+```
+
+### Testing Commands
+```bash
+# Run standard tests
+uv run pytest
+
+# Run Playwright tests (browser-based)
+uv run playwright install --with-deps
+uv run pytest -m playwright
+uv run pytest -m playwright --headed  # See browser
+```
+
+### Common Tasks
+- **Adding Django functionality** (most common contributor task)
+- **Creating Wagtail page models and StreamField blocks** (currently limited, needs improvement)
+- **Writing tests** (both standard pytest and Playwright for UI)
+- **Frontend work** with Tailwind CSS
+
+## Coding Standards
+
+### General Guidelines
+- **Use type hints** for all function signatures
+- Follow pre-commit hooks configuration (includes flake8, etc.)
+- Write tests alongside all new features
+- Generate high-level architecture/design documentation in `docs/` folder
+- Write helpful docstrings that provide context
+- Avoid obvious or redundant inline comments for code.
+- Run zizmor security checks on GitHub Actions workflows when modifying `.github/` directory
+
+### GitHub Actions Security
+- **Run zizmor locally** when modifying workflow files: `uvx zizmor .github/workflows/`
+- Zizmor checks for security issues in GitHub Actions workflows
+- The zizmor workflow runs automatically on PRs that modify `.github/` directory
+- Address any security findings before committing workflow changes
+
+### Testing Requirements
+- **Always run tests** before considering work complete
+- Write unit tests for new functionality (pytest or Django TestCase)
+- For JavaScript/frontend interactions, use Playwright tests with `@pytest.mark.playwright`
+- Playwright tests run with: `uv run pytest -m playwright`
+- Playwright tests should avoid generic wait calls
+
+### Type Annotations Example
+```python
+from typing import Optional
+from django.http import HttpRequest, HttpResponse
+
+
+def process_application(
+    request: HttpRequest, session_id: int, user_id: Optional[int] = None
+) -> HttpResponse:
+    """Process an application submission for a session."""
+    ...
+```
+
+## Architecture Notes
+
+### Key Models
+- **`CustomUser`** (accounts.CustomUser): AUTH_USER_MODEL, extends Django's User
+- **`Session`**: Represents a mentoring cohort with dates, applications, and participants
+- **`SessionMembership`**: Through model connecting users to sessions with roles
+- **Survey/Question/UserSurveyResponse**: Application and survey system
+- **Event**: Calendar events (legacy from original meetup vision)
+
+### Settings Configuration
+- Multiple settings files: `base.py`, `dev.py`, `test.py`, `production.py`
+- Uses `python-dotenv` for environment variables
+- Database via `dj-database-url`
+- Wagtail customizations for blog integration
+
+### Authentication & Profiles
+- Custom user model: `accounts.CustomUser`
+- Profile model: `accounts.UserProfile`
+- Email confirmation workflow
+- Role-based memberships (Captain, Navigator, Djangonaut)
+
+## Deployment
+
+### Platform
+- **Dokku** with Heroku buildpacks
+- **Important quirk:** Tailwind/npm packages must be copied to root directory for buildpacks, which confuses Dependabot
+
+### Environments
+- **Production:** https://djangonaut.space (deploys from `main` branch)
+- **Staging:** https://staging.djangonaut.space/ (deploys from `develop` branch)
+
+### Deployment Workflow
+1. Create PR from `develop` to `main` for production releases
+2. Merge using merge commit (not squash)
+3. `main` requires linear history
+4. If committing directly to `main`, rebase `develop` on `main` afterward
+
+## Important Considerations
+
+### When Writing Code
+- **Focus on Django application features** - most contributions will be here
+- **Wagtail blocks need improvement** - the current StreamField blocks are limited
+- **Documentation is sparse** - please generate architecture docs in `docs/` when adding major features
+- **Testing is mandatory** - no exceptions
+- **Avoid local imports** - When possible, put the imports at the top of the file
+
+### Database Patterns
+- Use Django ORM best practices
+- Leverage custom QuerySets (see `home.managers`)
+- Be mindful of N+1 queries in admin and views
+- Use `select_related` and `prefetch_related` appropriately
+
+### Wagtail Patterns
+- Puput blog is integrated via custom migration module
+- Custom image app config: `home.apps.CustomImagesAppConfig`
+- StreamField blocks should be reusable and well-documented
+
+### Frontend Patterns
+- Tailwind classes for styling
+- Alpine.js for interactivity
+- Forms use `widget_tweaks` for template-level customization
+- Custom form renderer: `indymeet.settings.base.FormRenderer`
+
+## Documentation Standards
+
+When adding significant features or changes:
+
+1. **Update or create docs in `docs/` folder:**
+   - Architecture decisions
+   - Data model diagrams
+   - Workflow explanations
+   - Integration guides
+
+2. **Write clear docstrings:**
+   - Explain "why" not just "what"
+   - Include usage examples for complex functions
+   - Document parameters and return types
+
+3. **Update README.md** if:
+   - Setup process changes
+   - New environment variables added
+   - New dependencies required
+
+## Environment Variables
+
+Key variables (see `.env.template` files):
+- `SECRET_KEY`: Django secret key
+- `DATABASE_URL`: PostgreSQL connection string
+- `ENABLE_TOOLBAR`: Enable Django Debug Toolbar
+- Email configuration for django-anymail
+- Sentry DSN for error tracking
+- reCAPTCHA keys
+
+## Git Workflow
+
+- **Main branch:** `main` (production)
+- **Development branch:** `develop` (staging)
+- **Feature branches:** `feature/AmazingFeature`
+- Use pre-commit hooks: `uv run pre-commit install`
+- Rebase feature branches on `develop` before merging
+- Linear history required on `main`
+
+## Common Commands Reference
+
+```bash
+# Dependency management
+uv add package-name              # Add main dependency
+uv add --dev package-name        # Add dev dependency
+uv add --optional test package   # Add test dependency
+uv lock --upgrade                # Update all dependencies
+uv lock --upgrade-package name   # Update specific package
+
+# Database
+uv run python manage.py migrate
+uv run python manage.py makemigrations
+uv run python manage.py dbshell
+
+# Fixtures
+uv run python manage.py dumpdata [options] -o fixtures/data.json
+uv run python manage.py loaddata fixtures/data.json
+
+# Testing
+uv run pytest                    # All tests except playwright
+uv run pytest -m playwright      # Playwright tests only
+uv run pytest --reuse-db         # Reuse database
+uv run pytest path/to/test.py    # Specific test file
+
+# Tailwind
+uv run python manage.py tailwind install
+uv run python manage.py tailwind start
+uv run python manage.py tailwind build   # Production build
+
+# GitHub Actions Security
+uvx zizmor .github/workflows/           # Check all workflows
+uvx zizmor .github/workflows/tests.yml  # Check specific workflow
+
+# Production/staging locally
+uv run python manage.py runserver --settings=indymeet.settings.production
+uv run python manage.py migrate --settings=indymeet.settings.production
+```
+
+## Resources
+
+- **Repository:** https://github.com/djangonaut-space/wagtail-indymeet
+- **Production Site:** https://djangonaut.space
+- **Staging Site:** https://staging.djangonaut.space/
+- **Django Docs:** https://docs.djangoproject.com/
+- **Wagtail Docs:** https://docs.wagtail.org/
+- **uv Docs:** https://docs.astral.sh/uv/
+
+---
+
+**Remember:** Always run tests, write documentation, use type hints, and focus on building features for the Django application that supports the Djangonaut Space mentoring program.
+- Don't import modules in the method if it's not needed

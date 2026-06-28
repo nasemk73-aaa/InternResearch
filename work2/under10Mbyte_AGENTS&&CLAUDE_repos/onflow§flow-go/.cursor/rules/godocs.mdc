@@ -1,0 +1,6 @@
+---
+description: 
+globs: *.go
+alwaysApply: false
+---
+@docs/agents/GoDocs.md

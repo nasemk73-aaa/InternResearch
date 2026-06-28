@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(rg:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "WebFetch(domain:docs.x.ai)",
+      "WebFetch(domain:docs.x.ai)",
+      "WebFetch(domain:docs.x.ai)"
+    ],
+    "deny": []
+  },
+  "enableAllProjectMcpServers": false
+}

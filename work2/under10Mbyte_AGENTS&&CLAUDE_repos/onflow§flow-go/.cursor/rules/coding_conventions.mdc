@@ -1,0 +1,6 @@
+---
+description: Coding Conventions
+globs: *.go
+alwaysApply: false
+---
+@docs/agents/CodingConventions.md

@@ -1,0 +1,75 @@
+# Embedded Finance Components - Root Configuration
+
+> **Cross-IDE Compatible**: This configuration works with Cursor, VS Code Copilot, Claude Code, and other AI agents.
+
+## 📚 Documentation Hierarchy
+
+**For detailed implementation patterns, always refer to:**
+
+1. **`embedded-components/ARCHITECTURE.md`** - ⭐ **Source of truth** for all architecture patterns
+2. **`.github/copilot-instructions.md`** - Complete implementation guide for GitHub Copilot
+3. **`.github/skills/`** - Task-specific agent skills (automatically activated; Cursor: use `.cursor` → `.github` symlink locally)
+4. **`AGENTS.md`** - Repository-wide agent instructions
+
+## 🎯 Agent Skills (Automatic)
+
+Skills in `.github/skills/` are automatically discovered and activated:
+
+**Tier 1 - Critical:**
+- `embedded-banking-architecture` - Component structure & organization
+- `component-testing` - Testing with MSW and React Query
+- `code-quality-workflow` - Test-fix-verify workflow
+- `styling-guidelines` - Tailwind CSS with `eb-` prefix
+- `react-patterns` - React 18 hooks and patterns
+
+**Tier 2 - Important:**
+- `i18n-l10n` - Internationalization
+- `windows-powershell` - PowerShell (NEVER use `&&`)
+- `test-and-fix-workflow` - Automated testing
+
+## ⚠️ Critical Rules
+
+1. **Follow `embedded-components/ARCHITECTURE.md`** for all architecture decisions
+2. **Run `cd embedded-components; yarn test`** after ANY code change
+3. **Use `eb-` prefix** for all Tailwind classes
+4. **Individual files** for hooks/utils with colocated tests
+5. **Direct imports** for components (no aggregation barrels)
+6. **PowerShell**: Use `;` not `&&` to chain commands
+
+## 🏗️ Repository Structure
+
+```
+/
+├── embedded-components/     # ACTIVE - Main UI component library
+│   ├── ARCHITECTURE.md     # ⭐ Source of truth
+│   └── .cursorrules        # Package-specific config
+└── .github/
+    ├── copilot-instructions.md  # Complete guide
+    └── skills/                   # Agent skills
+```
+
+## ⚡ Quick Commands
+
+```powershell
+# After code changes (MANDATORY)
+cd embedded-components; yarn format; yarn test
+
+# Fix formatting/linting
+cd embedded-components; yarn format; yarn lint:fix
+
+# Component location
+# → embedded-components/src/core/ComponentName/
+```
+
+## 📖 Need Details?
+
+- **Implementation patterns** → `.github/copilot-instructions.md`
+- **Architecture decisions** → `embedded-components/ARCHITECTURE.md`
+- **Task-specific help** → `.github/skills/`
+- **Package config** → `embedded-components/.cursorrules`
+
+---
+
+**Format**: Agent Skills 1.0 (agentskills.io)  
+**Updated**: December 24, 2025  
+**Cross-IDE**: ✅ Cursor, VS Code, Claude Code, and more

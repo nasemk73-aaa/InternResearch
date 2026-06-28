@@ -1,0 +1,71 @@
+---
+description: General development guidelines, nix environment, service startup, development preferences, code quality principles
+alwaysApply: true
+---
+
+# The use of nix
+
+**CRITICAL: This project uses nix to manage the development environment.**
+
+**YOU MUST ALWAYS prefix commands with `CURSOR_DEV=true nix develop -c`:**
+
+**For Cloud VM setup, see the `cloud-agent-setup` rule.**
+
+```bash
+CURSOR_DEV=true nix develop -c <command>
+```
+
+# Development Environment Setup
+
+## Starting the Development Environment
+
+**IMPORTANT**: Always assume that the developer has already started all necessary services using:
+
+```bash
+pnpm sut
+```
+
+This command starts:
+- Backend (with auto-reload on Java code changes via Gradle continuous build)
+- Frontend (with hot module replacement on Vue code changes)
+- Mountebank (mock external services)
+
+**CRITICAL: All services automatically restart/reload when code changes are made.**
+
+**DO NOT tell developers to restart `pnpm sut` after making code changes!**
+- Backend: Uses Gradle continuous build (`-t` flag) which automatically detects changes, recompiles Java classes, and hot-reloads them into the running Spring Boot application
+- Frontend: Uses Vite with Hot Module Replacement (HMR) for instant Vue component updates
+- Developers should NEVER need to manually restart services during development
+
+**If services are not running or if you need to suggest starting them**, recommend running `pnpm sut` in a separate terminal first. But once running, DO NOT suggest restarting after code changes.
+
+**Unsure if SUT is running?** Run **`CURSOR_DEV=true nix develop -c pnpm sut:healthcheck`**. If not OK, run **`CURSOR_DEV=true nix develop -c pnpm sut:restart`**, or start **`pnpm sut`** if nothing was listening. Do **not** tell people to restart `pnpm sut` after normal code edits. **Cloud VM** (no Nix): same **`pnpm sut:healthcheck`** / **`pnpm sut:restart`** from repo root; **`sut:restart`** needs **`lsof`** — see **`cloud-agent-setup`**.
+
+## Running Commands in Terminal
+
+**For Cloud VM setup, see the `cloud-agent-setup` rule.**
+
+Always use `CURSOR_DEV=true nix develop -c` prefix for commands (e.g., `CURSOR_DEV=true nix develop -c pnpm frontend:test`).
+
+When deleting files, instead of using `rm -f` or `rm -rf` prefer to use `trash` instead provided by `trash-cli` from flake.nix packages.
+
+# Development preferences
+
+## High Cohesion
+
+It is the top priority to keep high cohesion all the time.
+
+* Minimize the duplicate and make sure the same concept has one representation acroess the whole system
+* The code should have good mapping to the ubiquitous business domain
+* Thing belong together should be placed together or close by, so that they are easy to use
+
+## Keep it simple
+
+* DO NOT follow the defensive programming style
+* Use the simplest solution and minimum code to achieve what the prompt asked to do.
+
+## Documentation
+
+* DO NOT add historical documentation, comments about past implementations, or completed task lists
+* Code readers only care about the current state, not development history
+* Exception: Temporary requirement documents in the `ongoing/` folder are allowed for active development

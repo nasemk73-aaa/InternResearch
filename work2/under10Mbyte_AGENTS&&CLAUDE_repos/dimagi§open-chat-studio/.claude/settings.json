@@ -1,0 +1,53 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python manage.py:*)",
+      "Bash(pytest:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(inv ruff:*)",
+      "Bash(ruff:*)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(uv pip list:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(rg:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(npx stencil test:*)",
+      "WebFetch(domain:docs.openchatstudio.com)",
+      "Bash(npm run lint:*)",
+      "Bash(uv run ruff check:*)",
+      "Bash(uv run ruff format:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": false,
+  "env": {
+    "MAX_THINKING_TOKENS": "32000"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/format-lint.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/setup-env.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

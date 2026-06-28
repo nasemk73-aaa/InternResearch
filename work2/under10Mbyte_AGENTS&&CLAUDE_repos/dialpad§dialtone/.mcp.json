@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "dialtone": {
+      "command": "dialtone-mcp-server"
+    }
+  }
+}

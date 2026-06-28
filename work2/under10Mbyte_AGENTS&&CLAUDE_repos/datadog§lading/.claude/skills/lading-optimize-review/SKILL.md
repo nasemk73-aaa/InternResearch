@@ -1,0 +1,202 @@
+---
+name: lading-optimize-review
+description: Reviews optimization patches using a 5-persona peer review system. Requires unanimous approval backed by benchmarks.
+argument-hint: "[bench] [fingerprint] [file] [target] [technique]"
+allowed-tools: Bash(cat:*) Bash(sample:*) Bash(samply:*) Bash(cargo:*) Bash(ci/*:*) Bash(hyperfine:*) Bash(*/payloadtool:*) Bash(tee:*) Read Glob Grep
+context: fork
+---
+
+# Optimization Patch Review
+
+A rigorous 5-persona peer review system for optimization patches in lading. Requires unanimous approval backed by concrete benchmark data. **Duplicate Hunter persona prevents redundant work.**
+
+## Role: Judge
+
+**Review is the decision-maker. It does NOT record results.**
+
+Review judges using benchmarks and 5-persona review, then returns a structured report.
+
+## Outcomes
+
+| Outcome | Votes | Action |
+|---------|-------|--------|
+| **APPROVED** | 5/5 APPROVE | Return APPROVED report |
+| **REJECTED** | Any REJECT | Return REJECTED report |
+
+---
+
+## Arguments
+
+This skill requires 5 positional arguments passed by the caller:
+
+| Arg | Field | Example | Used for |
+|-----|-------|---------|----------|
+| `$ARGUMENTS[0]` | bench | `trace_agent` | `cargo criterion --bench` flag |
+| `$ARGUMENTS[1]` | fingerprint | `ci/fingerprints/trace_agent_v04/lading.yaml` | payloadtool config path |
+| `$ARGUMENTS[2]` | file | `lading_payload/src/trace_agent/v04.rs` | report + duplicate check |
+| `$ARGUMENTS[3]` | target | `V04::to_bytes` | report |
+| `$ARGUMENTS[4]` | technique | `buffer-reuse` | report + duplicate check |
+
+**If any argument is missing -> REJECT. All 5 are required.**
+
+### Generate Report ID
+
+Derive the `id` from the file and technique arguments:
+1. Take the filename stem from `$ARGUMENTS[2]` (e.g. `lading_payload/src/trace_agent/v04.rs` → `trace-agent-v04`)
+2. Append the technique `$ARGUMENTS[4]` (e.g. `buffer-reuse`)
+3. Join with `-` → `trace-agent-v04-buffer-reuse`
+
+Use this `id` in the report.
+
+---
+
+## Phase 1: Benchmark Execution
+
+### Step 1: Read Baseline Data
+
+Read the baseline benchmark files captured:
+
+- `/tmp/criterion-baseline.log` — micro-benchmark baseline
+- `/tmp/baseline.json` — macro-benchmark timing baseline
+- `/tmp/baseline-mem.txt` — macro-benchmark memory baseline
+
+**If baseline data is missing -> REJECT. Baselines must be captured before any code change and before this gets invoked.**
+
+### Step 2: Run Post-Change Micro-benchmarks
+
+```bash
+cargo criterion --bench $ARGUMENTS[0] 2>&1 | tee /tmp/criterion-optimized.log
+```
+
+Note: Criterion automatically compares against the last run and reports percentage changes.
+
+Compare results — look for "change:" lines showing improvement/regression.
+
+Example output: `time: [1.2345 ms 1.2456 ms 1.2567 ms] change: [-5.1234% -4.5678% -4.0123%]`
+
+### Step 3: Run Post-Change Macro-benchmarks
+
+```bash
+cargo build --release --bin payloadtool
+hyperfine --warmup 3 --runs 30 --export-json /tmp/optimized.json \
+  "./target/release/payloadtool $ARGUMENTS[1]"
+./target/release/payloadtool "$ARGUMENTS[1]" --memory-stats 2>&1 | tee /tmp/optimized-mem.txt
+```
+
+### Statistical Requirements
+
+- Minimum 30 runs for hyperfine (`--runs 30`)
+- Criterion handles statistical significance internally
+- Time improvement >= 5% for significance
+- Memory improvement >= 10% for significance
+- Allocation reduction >= 20% for significance
+
+### NO EXCEPTIONS
+
+- "Test dependencies don't work" -> REJECT. Fix dependencies first.
+- "Theoretically better" -> REJECT. Prove it with numbers.
+- "Obviously an improvement" -> REJECT. Obvious is not measured.
+- "Will benchmark later" -> REJECT. Benchmark now.
+
+---
+
+## Phase 2: Five-Persona Review
+
+### 1. Duplicate Hunter (Checks for Redundant Work)
+- [ ] Check `.claude/skills/lading-optimize-hunt/assets/db.yaml` for `$ARGUMENTS[2]` + `$ARGUMENTS[4]` combo
+- [ ] File + technique combo not already approved
+- [ ] No substantially similar optimization exists
+- [ ] If duplicate found -> REJECT with "DUPLICATE: see <existing entry>"
+
+### 2. Skeptic (Demands Proof)
+- [ ] Baseline data verified present
+- [ ] Post-change benchmarks executed with identical methodology
+- [ ] Hot path verified via profiling (not just guessed)
+- [ ] Micro threshold met (>=5% time)
+- [ ] Macro threshold met (>=5% time OR >=10% mem OR >=20% allocs)
+- [ ] Statistical significance confirmed (p<0.05 or criterion "faster")
+- [ ] Improvement is real, not measurement noise
+- [ ] Benchmark methodology sound (same config, same machine)
+
+### 3. Conservative (Guards Correctness)
+- [ ] Run `ci/validate` and validate that it passes completely
+- [ ] No semantic changes to output
+- [ ] **Determinism preserved** (same seed -> same output)
+- [ ] No `.unwrap()` or `.expect()` added (lading MUST NOT panic)
+- [ ] **No bugs introduced** (if bug found -> REJECT with bug details)
+- [ ] Property tests exist for changed code
+
+### 4. Rust Expert (Lading-Specific Patterns)
+- [ ] No `mod.rs` files (per CLAUDE.md)
+- [ ] All `use` statements at file top (not inside functions)
+- [ ] Format strings use named variables (`"{index}"` not `"{}"`)
+- [ ] Pre-computation in initialization, not hot paths
+- [ ] Worst-case behavior considered, not just average-case
+- [ ] No unnecessary cloning or allocation in hot paths
+
+### 5. Greybeard (Simplicity Judge)
+- [ ] Code still readable without extensive comments
+- [ ] Complexity justified by measured improvement
+- [ ] "Obviously fast" pattern, not clever trick
+- [ ] Follows 3-repeat abstraction rule (no premature abstraction)
+- [ ] Change is minimal - no scope creep
+
+---
+
+## Phase 3: Kani/Property Test Check
+
+If the optimization touches critical code:
+
+### For lading_throttle:
+```bash
+ci/kani lading_throttle
+```
+
+### For lading_payload:
+```bash
+ci/kani lading_payload
+```
+
+**Kani constraints:**
+- Kani proofs are more complete but labor-intensive
+- Kani may not compile complex code
+- Kani runs are EXTREMELY slow for complex code
+
+**If Kani fails to run:**
+1. Document why (compilation error? timeout?)
+2. Verify comprehensive property tests exist instead
+3. This is acceptable - Kani feasibility varies
+
+---
+
+## Phase 4: Decision
+
+| Outcome | Votes | Action |
+|---------|-------|--------|
+| **APPROVED** | 5/5 APPROVE | Return APPROVED report |
+| **REJECTED** | Any REJECT | Return REJECTED report |
+
+Duplicates, bugs, correctness issues, and missing benchmarks are all rejections. Describe the specific reason in the report's `reason` field.
+
+---
+
+## Phase 5: Return Report
+
+**Review does NOT record results and does NOT create files. Return a structured YAML report to the caller.**
+
+Fill in the appropriate template and return the completed YAML:
+
+| Verdict   | Template                                                               |
+| --------- | ---------------------------------------------------------------------- |
+| approved  | `.claude/skills/lading-optimize-review/assets/approved.template.yaml`  |
+| rejected  | `.claude/skills/lading-optimize-review/assets/rejected.template.yaml`  |
+
+1. Read the appropriate template from the `.claude/skills/lading-optimize-review/assets/` directory
+2. Fill in placeholders using argument values:
+   - `id` → generated ID (see "Generate Report ID" above)
+   - `target` → `$ARGUMENTS[2]:$ARGUMENTS[3]` (e.g. `lading_payload/src/trace_agent/v04.rs:V04::to_bytes`)
+   - `technique` → `$ARGUMENTS[4]`
+3. Fill remaining fields with actual benchmark data from the review
+4. Return the filled-in report
+
+---
