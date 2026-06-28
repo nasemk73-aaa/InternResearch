@@ -1,1 +1,0 @@
-../docs/internal/contributing/how-integration-tests-work.md

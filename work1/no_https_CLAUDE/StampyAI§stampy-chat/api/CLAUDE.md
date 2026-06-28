@@ -1,1 +1,0 @@
-/home/lauren/stampy-chat/CLAUDE.md

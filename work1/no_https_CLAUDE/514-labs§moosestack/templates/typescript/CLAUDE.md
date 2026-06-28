@@ -1,3 +1,0 @@
-# TypeScript Template
-
-@AGENTS.md

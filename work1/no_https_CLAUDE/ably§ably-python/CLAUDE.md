@@ -1,2 +1,0 @@
-- after making any code changes, run `uv ruff check` to make sure linting passes
-- use `uv` to run any other necessary tasks such as `pytest`

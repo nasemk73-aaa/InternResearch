@@ -1,1 +1,0 @@
-- Use uv to run tests and any scripts

@@ -1,1 +1,0 @@
-Please read AGENTS.md in root of the project file for more information.

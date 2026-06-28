@@ -1,1 +1,0 @@
-../docs/internal/contributing/design-patterns-and-conventions.md

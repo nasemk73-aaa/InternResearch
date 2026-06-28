@@ -1,1 +1,0 @@
-See Cursor rules in `.cursor/rules`

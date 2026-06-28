@@ -1,1 +1,0 @@
-internal/contributing/how-to-write-documentation.md
