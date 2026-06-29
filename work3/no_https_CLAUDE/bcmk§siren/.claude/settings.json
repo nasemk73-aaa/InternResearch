@@ -1,0 +1,49 @@
+{
+  "effortLevel": "high",
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "permissions": {
+    "deny": [
+      "Read(//**/*.ignore)",
+      "Read(//**/*.ignore.*)",
+      "Read(//**/.idea/**)"
+    ],
+    "allow": [
+      "Edit",
+      "Write",
+      "WebSearch",
+      "WebFetch",
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go mod graph:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go list:*)",
+      "Bash(go fmt:*)",
+      "Bash(go doc:*)",
+      "Bash(go env:*)",
+      "Bash(gopls:*)",
+      "Bash(golangci-lint run:*)",
+      "Bash(git add:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git status:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(sed:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(printf:*)",
+      "Bash(xxd:*)",
+      "Bash(curl:*)",
+      "Bash(prettier:*)",
+      "Bash(psql:*)",
+      "Bash(rm:*)",
+      "Bash(cmd/schema-dump/schema-dump)",
+      "Bash(scripts/publish)"
+    ]
+  }
+}

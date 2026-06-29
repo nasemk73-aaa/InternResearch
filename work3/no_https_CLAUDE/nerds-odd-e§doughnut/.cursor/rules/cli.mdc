@@ -1,0 +1,99 @@
+---
+description: related to doughnut CLI
+globs: cli/**, e2e_test/features/cli/**
+alwaysApply: false
+---
+# doughnut-cli
+
+TypeScript CLI for Doughnut. Lives in `cli/`.
+
+## Structure
+
+```
+cli/
+  src/           # Production code (shell, TTY, UI, `processInput` exit gate; subcommand handlers in `src/commands/`)
+  src/commands/  # Slash-command and subcommand implementations + aggregated help
+  src/shims/     # Modules referenced only from the esbuild `bundle` script (aliases)
+  tests/         # Vitest unit tests (*.test.ts)
+  vitest.config.ts
+  tsconfig.json
+  package.json
+```
+
+## TypeScript module exports
+
+Keep each module’s **public surface small**: `export` only what other modules actually use. Prefer leaving helpers, constants, and types **unexported** when they are implementation details. Do not add exports “for tests” or “maybe later” — if only tests need a symbol, test through a higher-level entry point when possible (see **Vitest: observable behavior** below). Avoid widening the export list when a single import site could instead live next to the code.
+
+## Commands
+
+| Task | Command |
+|------|---------|
+| Build bundle | `pnpm cli:bundle` |
+| Run tests | `pnpm cli:test` |
+| Mutation test (Stryker) | `CURSOR_DEV=true nix develop -c bash -c 'cd cli && pnpm test:mutation'` — see `.cursor/rules/mutation-testing.mdc` |
+| Format | `pnpm cli:format` |
+| Lint | `pnpm cli:lint` |
+
+## Architecture Roadmap
+
+The archittecture roadmap can be found at ongoing/cli-architecture-roadmap.md
+
+The roadmap services as a guideline for growing the architecture. It is not for immediately direct implimentation. The architecture part is only applied and must be apppled when a feature requires it. The decision should be challenged before followed. It also need to be updated with new decision and the visionary part of it should be continously refined with latest understanding.
+
+## Terminal column width (TTY layout)
+
+**Do not use** JavaScript string `.length` or UTF-16 code units to measure how wide text is on screen. Terminals use **column count**: CJK and many emoji render as **2 columns**; grapheme clusters (flags, ZWJ families, text + VS16) must be measured as units.
+
+## Vitest: observable behavior
+
+For **interactive** behavior, prefer **`runInteractive`** with a **mock TTY** stdin and assert **stdout** / visible output — the test may **not import** the adapter or helper you changed; coverage through the CLI surface is enough. Use **`processInput`** + mock **`OutputAdapter`** for the **default console adapter** contract, helpers, or when there is no stable TTY hook. See **Testing strategy → Observable behavior first** in `.cursor/rules/planning.mdc`.
+
+**Mocking Doughnut HTTP from unit tests** — Use **`vi.spyOn`** on **`doughnut-api`** controller static methods (e.g. `RecallsController.recalling`, `MemoryTrackerController.showMemoryTracker`) and **`mockResolvedValue`** with the SDK success shape (`{ data: … }`, cast as **`Awaited<ReturnType<typeof Controller.method>>`** when needed). Build **`data`** values that match backend / SDK types with **`makeMe`** from **`doughnut-test-fixtures/makeMe`** (e.g. `makeMe.aMemoryTracker`, `makeMe.aNoteRealm`, `makeMe.aDueMemoryTrackersList`) instead of ad hoc object literals. Do **not** use **`http.createServer`** to fake `/api/…` for ordinary command behavior. Reserve a real local HTTP server for tests whose subject is transport or error classification (e.g. status codes), not for happy-path recall or token flows.
+
+**No fixed-time waits in unit tests** — Do not use `sleep`, `setTimeout(…, N)` with a duration, or similar wall-clock delays to “let Ink/React catch up.” Prefer driving the real async surface: `setImmediate` / microtask turns in a loop until an **observable** condition holds (e.g. `frames` or stdout contains the expected text), with a **turn-count** cap and a clear failure message if the condition never becomes true. E2E may still use bounded retries where appropriate; Vitest unit tests under `cli/tests/` should stay deterministic without arbitrary milliseconds.
+
+## Ink + React + Node (avoid flaky interactive tests)
+
+- **Defer `useApp().exit()` / unmount after UI updates:** Do not call **`exit()`** from the same synchronous turn as a slash command that still has to append transcript state (e.g. “Bye.”). **`/exit`** is special-cased in **`InteractiveCliApp`**: after the assistant line is committed, a **`useEffect`** runs **`exit()`**. In Node, **`setTimeout(…, 0)`** can still run **before** **`setImmediate`** work used by React/Ink — avoid **`setTimeout(…, 0)`** for this ordering.
+- **Stable `useInput` handler:** Pass **`useCallback`** (with correct deps) to **`useInput`**, not a new inline function every render. Ink’s `useInput` effect depends on the handler reference; a new function each render tears down and re-attaches the internal listener and can drop keystrokes under load.
+- **`ink-testing-library` + stdin:** **`useInput` registers via `useEffect`** — **`stdin.write` immediately after `render()` can race** empty listeners. Before real input, **wait on an observable** (e.g. write a harmless probe key, **`waitForFrames` until `lastFrame()` shows it**, then undo if needed), or use **`renderInkWhenCommandLineReady`** from `cli/tests/inkTestHelpers.ts` (probe key + wait; see `InteractiveCliApp` ink tests).
+- **Ink test async helpers:** Import **`waitForFrames`**, **`waitForLastFrame`**, and **`stripAnsi`** from **`cli/tests/inkTestHelpers.ts`** instead of duplicating the `setImmediate` poll loop (or ANSI stripping) in each test file.
+- **Typing simulations:** Do not use **`setImmediate` per character** as “Ink is ready.” **Wait until the frame shows the expected buffer** (or combined `frames` text) before the next `stdin.write`.
+
+## Domain terminology
+
+Vocabulary for Cucumber steps and page objects (`e2e_test/start/pageObjects/cli/`). **Exact TTY behavior** (past messages, user input history, cursor, rendering) lives in code + Vitest; **scenario-shaped coverage** in `e2e_test/features/cli/*.feature`.
+
+| Term | Definition |
+|------|-------------|
+| **Non-interactive output** | Full stdout for E2E subcommand spawns (e.g. installed `version` / `update`) and similar one-shot runs; no PTY interactive input-ready control sequence. |
+| **Past CLI assistant messages** | Interactive: past CLI output blocks (parsed transcript section). Gherkin: `in past CLI assistant messages`. |
+| **Past user messages** | Interactive: past user lines as gray-background blocks (`\x1b[100m`…), one blank padded row above the text (E2E checks this); one padded row below before the command line (see Vitest `pastUserMessageBlock` / `InteractiveCliApp.test`). Gherkin: `in past user messages`. Recall **y/n** confirmations (stop recall, load more, just-review) do **not** add a separate past user message row — only the outcome lines appear. |
+| **User input history** | TTY: committed lines for ↑↓ recall + persistence (`mainInteractivePrompt/history.ts`, `mainInteractivePrompt/userInputHistoryFile.ts`) **while the command-line Ink region has focus**. The live command buffer is **single-line** (newlines from paste become spaces; no Shift+Enter newline). Masked before storage/display. Recall **y/n** answers are not appended (same rule as past user messages). |
+| **Current Stage** | Conceptual state during a multi-step or long-running command (e.g. recall session, slow interactive network call). |
+| **Current Stage Indicator** | On the TTY, when a stage is surfaced: the first line of the **Current prompt** block — full terminal width on the **Current stage band** (e.g. “Recalling” while in recall). Not part of **Current guidance**. |
+| **Current stage band** | Shared background for the Current Stage Indicator line and, when the indicator is shown, the **Current prompt** separator under it, so the top of the block reads as one strip. Implemented as `CURRENT_STAGE_BAND_BACKGROUND_SGR` in `cli/src/renderer.ts`. |
+| **Current prompt** | Block above the **command line** (live typing strip): optional **Current Stage Indicator** + separator (banded when the indicator is shown), then wrapped lines (MCQ stem and notebook line, fetch-wait prompt, y/n text, token-list copy, etc.). Recall **MCQ** (TTY): **numbered choices** live in **Current guidance**, not here. |
+| **Current guidance** | Below the command line: `/` hints, token lists, **MCQ numbered choices** (wrapped to terminal width; ↑↓ selects by choice index). |
+
+## CLI E2E
+
+Features: **`e2e_test/features/cli/`**. Steps and page objects: **`e2e_test/step_definitions/cli.ts`**, **`e2e_test/start/pageObjects/cli/`**.
+
+- **Run:** Cypress Node tasks spawn `cli/dist/doughnut-cli.bundle.mjs` via `node` (same locally and in GitHub Actions). Before spawn, `ensureCliBundleFresh` rebuilds the bundle when `cli/src`, `cli/package.json`, `cli/tsconfig.json`, or `packages/doughnut-api/src` are newer than the bundle. Set **`DOUGHNUT_CLI_E2E_USE_TSX=1`** to force `pnpm -C cli exec tsx src/index.ts` for debugging. Installation scenarios use the E2E install bundle path (see `@bundleCliE2eInstall`).
+- **`@bundleCliE2eInstall`:** Builds `cli/dist/e2e-install-doughnut-cli.bundle.mjs` before each scenario and removes it after; the local LB (`scripts/local-lb.mjs`) serves `/doughnut-cli-latest/doughnut` from that file when present so install tests do not overwrite `cli/dist/doughnut-cli.bundle.mjs`.
+- **Active CLI E2E (CI):** `e2e_test/features/cli/cli_install_and_run.feature` non-ignored scenarios only. **`installCli`** runs the install script. Non-interactive steps use **`runInstalledCli`** (`node <installed binary> …`, stdin closed; e.g. `version`, `update`) and **`cli.nonInteractiveOutput().expectContains`** — that helper rejects captures that look like an interactive PTY session (`e2e_test/start/pageObjects/cli/outputAssertions.ts`). The **Install and run the CLI in interactive mode** scenario uses **`runInstalledCliInteractive`** (PTY), **`cliInteractiveWriteLine`** for slash input, and transcript assertions **`interactiveCli().pastCliAssistantMessages().expectContains`** / **`pastUserMessages().expectContains`** (same module). Those assertions read the live PTY buffer via plugin task **`cliInteractivePtyGetBuffer`** (with retry / timeout in `outputAssertions.ts`).
+
+## Build output
+
+- Bundle: `cli/dist/doughnut-cli.bundle.mjs` (shebang)
+- Release: `gs://dough-01/doughnut-cli-latest/doughnut` (`cli-release.yml`)
+- Local install URL: local LB serves `/doughnut-cli-latest/doughnut` (see `scripts/local-lb.mjs`, `docs/gcp/prod_env.md`)
+
+**Ink + esbuild (`react-devtools-core`):** Ink may load `devtools.js`, which imports `react-devtools-core`. That package is optional in Ink (used when `DEV=true`; see Ink’s README). Esbuild still resolves the import when producing the single-file bundle, so `cli/package.json` `bundle` aliases `react-devtools-core` to `cli/src/shims/react-devtools-core-stub.ts`. The shipped bundle therefore does not depend on installing `react-devtools-core`. For React DevTools against an **unbundled** run (e.g. `pnpm -C cli exec tsx src/index.ts`), install `react-devtools-core` and use `DEV=true` as Ink documents.
+
+## Install scripts
+
+- Bash: `backend/src/main/resources/install.sh`
+- PowerShell: `backend/src/main/resources/install.ps1`
+- Served at `/install` (`InstallController`; `?win32=true` for PowerShell)

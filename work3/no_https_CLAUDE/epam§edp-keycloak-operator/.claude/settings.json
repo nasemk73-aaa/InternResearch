@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(run-tests)",
+      "Skill(run-tests:*)",
+      "Skill(run-golangci-lint)",
+      "Skill(run-golangci-lint:*)",
+      "Skill(generate-mocks)",
+      "Skill(generate-mocks:*)",
+      "Skill(cr-field)",
+      "Skill(cr-field:*)",
+      "Bash(make mocks)",
+      "Bash(TEST_KEYCLOAK_URL=http://localhost:8086 make test)",
+      "Bash(docker ps --filter name=keycloak-test --format '{{.Names}}')"
+    ]
+  }
+}

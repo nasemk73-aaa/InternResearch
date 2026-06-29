@@ -1,0 +1,85 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mcp list-tools:*)",
+      "Bash(mcp__list-resources:*)",
+
+      "Bash(grep:*)",
+      "Bash(echo:*)",
+
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(git log:*)",
+
+      "Bash(gh issue view:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh label list:*)",
+
+      "Bash(uv run pytest:*)",
+
+      "Bash(gcloud builds list:*)",
+      "Bash(gcloud builds log:*)",
+      "Bash(gcloud builds describe:*)",
+      "Bash(gcloud dataflow jobs list:*)",
+
+      "Bash(gsutil ls:*)",
+
+
+      "Bash(bq ls:*)",
+      "Bash(bq show:*)"
+    ],
+    "deny": [
+      "Read(./..env)",
+      "Read(./..env.*)",
+      "Read(./..venv)",
+      "Read(./.env)",
+      "Read(./.venv)",
+      "Read(./.ENV)",
+      "Read(./.env.bak)",
+      "Read(./.venv.bak)",
+      "Read(./..firebase)",
+      "Read(./..runtimeconfig.json)",
+      "Read(./.service_account.json)",
+      "Read(./..atmos)",
+      "Read(./..decrypted*)",
+      "Read(./.**/.terraform/*)",
+      "Read(./.*.tfstate)",
+      "Read(./.*.tfstate.*)",
+      "Read(./.*.tfvars)",
+      "Read(./.**/.tfout/*)",
+      "Read(./.recidiviz/local/**/*)",
+      "Read(./.recidiviz/case_triage/local/**/*)",
+      "Read(./.recidiviz/justice_counts/control_panel/local/**/*)",
+      "Edit(./..env)",
+      "Edit(./..env.*)",
+      "Edit(./..venv)",
+      "Edit(./.env)",
+      "Edit(./.venv)",
+      "Edit(./.ENV)",
+      "Edit(./.env.bak)",
+      "Edit(./.venv.bak)",
+      "Edit(./..firebase)",
+      "Edit(./..runtimeconfig.json)",
+      "Edit(./.service_account.json)",
+      "Edit(./..atmos)",
+      "Edit(./..decrypted*)",
+      "Edit(./.**/.terraform/*)",
+      "Edit(./.*.tfstate)",
+      "Edit(./.*.tfstate.*)",
+      "Edit(./.*.tfvars)",
+      "Edit(./.**/.tfout/*)",
+      "Edit(./.recidiviz/local/**/*)",
+      "Edit(./.recidiviz/case_triage/local/**/*)",
+      "Edit(./.recidiviz/justice_counts/control_panel/local/**/*)"
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "https://us-central1-recidiviz-security.cloudfunctions.net/claude-telemetry-collector/v1/metrics",
+    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "https://us-central1-recidiviz-security.cloudfunctions.net/claude-telemetry-collector/v1/logs",
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_LOGS_EXPORTER": "otlp"
+  }
+}

@@ -1,0 +1,11 @@
+---
+description: Consider this when adding tests.
+alwaysApply: false
+---
+For comprehensive documentation on writing autests for Apache Traffic Server, see:
+
+**doc/developer-guide/testing/autests.en.rst**
+
+Most test coverage comes from end to end autests in tests/gold_tests. Of these,
+most should be writting using ATSReplayTest with the configuration and traffic
+specification in the associated replay.yaml file.

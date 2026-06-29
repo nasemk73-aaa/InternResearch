@@ -1,0 +1,269 @@
+
+**IMPORTANT**: read this complete file and all referenced md files completely!
+
+
+# Summary
+1. This is a compressed token program implementation similar to spl-token program.
+2. The program supports compressed token accounts and ctoken solana accounts (decompressed compressed tokens but not spl tokens)
+3. The account layout of ctoken solana accounts is the same as for spl tokens, but we implemented a custom extension Compressible.
+4. Compressed mint accounts cmints support one extension TokenMetadata.
+
+# Accounts
+- Compressed tokens can be decompressed to spl tokens. Spl tokens are not explicitly listed here.
+- **description**
+- **discriminator**
+- **state layout**
+- **serialization example**
+- **hashing** (only for compressed accounts)
+- **derivation:** (only for pdas)
+- **associated instructions** (create, close, update)
+
+**Accounts:**
+- you will find all accounts of and related to the CToken program in `programs/compressed-token/program/docs/ACCOUNTS.md`
+1. Solana Accounts
+  1.1. CToken (`CompressedToken`)
+  1.2. Associated CToken (`CompressedToken`)
+  1.3. Extension: Compressible Config (`CompressibleConfig`)
+2. Compressed Accounts
+  2.1. Compressed Token (`TokenData`)
+  2.2. Compressed Mint (`CompressedMint`)
+
+
+
+
+# Instructions
+
+**Instruction Schema:**
+Every instruction description must include the sections:
+- **path** path to instruction code in the program
+- **description** highlevel description what the instruction does including accounts used and their state layout (paths to the code), usage flows what the instruction does
+- **instruction_data** paths to code where instruction data structs are defined
+- **Accounts** accounts in order including checks
+- **instruction logic and checks**
+- **Errors** possible errors and description what causes these errors
+
+## Instruction Index
+
+### Account Management
+1. **Create CToken Account** - [`docs/ctoken/CREATE.md`](docs/ctoken/CREATE.md)
+   - Create regular token account (discriminator: 18, enum: `InstructionType::CreateTokenAccount`)
+   - Create associated token account (discriminator: 100, enum: `InstructionType::CreateAssociatedTokenAccount`)
+   - Create associated token account idempotent (discriminator: 102, enum: `InstructionType::CreateAssociatedTokenAccountIdempotent`)
+   - **Config validation:** Requires ACTIVE config only
+
+2. **Close Token Account** - [`docs/ctoken/CLOSE.md`](docs/ctoken/CLOSE.md) (discriminator: 9, enum: `InstructionType::CloseTokenAccount`)
+   - Close decompressed token accounts
+   - Returns rent exemption to rent recipient if compressible
+   - Returns remaining lamports to destination account
+
+### Rent Management
+3. **Claim** - [`docs/compressible/CLAIM.md`](docs/compressible/CLAIM.md)
+   - Claims rent from expired compressible accounts (discriminator: 104, enum: `InstructionType::Claim`)
+   - **Config validation:** Not inactive (active or deprecated OK)
+
+4. **Withdraw Funding Pool** - [`docs/compressible/WITHDRAW_FUNDING_POOL.md`](docs/compressible/WITHDRAW_FUNDING_POOL.md)
+   - Withdraws funds from rent recipient pool (discriminator: 105, enum: `InstructionType::WithdrawFundingPool`)
+   - **Config validation:** Not inactive (active or deprecated OK)
+
+### Token Operations
+5. **Transfer2** - [`docs/compressed_token/TRANSFER2.md`](docs/compressed_token/TRANSFER2.md)
+   - Batch transfer instruction for compressed/decompressed operations (discriminator: 101, enum: `InstructionType::Transfer2`)
+   - Supports Compress, Decompress, CompressAndClose operations
+   - Multi-mint support with sum checks
+
+6. **MintAction** - [`docs/compressed_token/MINT_ACTION.md`](docs/compressed_token/MINT_ACTION.md)
+   - Batch instruction for compressed mint management and mint operations (discriminator: 103, enum: `InstructionType::MintAction`)
+   - Supports 10 action types: CreateCompressedMint, MintTo, UpdateMintAuthority, UpdateFreezeAuthority, MintToCToken, UpdateMetadataField, UpdateMetadataAuthority, RemoveMetadataKey, DecompressMint, CompressAndCloseCMint
+   - Handles both compressed and decompressed token minting
+
+7. **CTokenTransfer** - [`docs/ctoken/TRANSFER.md`](docs/ctoken/TRANSFER.md)
+   - Transfer between decompressed accounts (discriminator: 3, enum: `InstructionType::CTokenTransfer`)
+
+8. **CTokenTransferChecked** - [`docs/ctoken/TRANSFER_CHECKED.md`](docs/ctoken/TRANSFER_CHECKED.md)
+   - Transfer with decimals validation (discriminator: 12, enum: `InstructionType::CTokenTransferChecked`)
+
+9. **CTokenApprove** - [`docs/ctoken/APPROVE.md`](docs/ctoken/APPROVE.md)
+   - Approve delegate on decompressed CToken account (discriminator: 4, enum: `InstructionType::CTokenApprove`)
+
+10. **CTokenRevoke** - [`docs/ctoken/REVOKE.md`](docs/ctoken/REVOKE.md)
+   - Revoke delegate on decompressed CToken account (discriminator: 5, enum: `InstructionType::CTokenRevoke`)
+
+11. **CTokenMintTo** - [`docs/ctoken/MINT_TO.md`](docs/ctoken/MINT_TO.md)
+   - Mint tokens to decompressed CToken account (discriminator: 7, enum: `InstructionType::CTokenMintTo`)
+
+12. **CTokenBurn** - [`docs/ctoken/BURN.md`](docs/ctoken/BURN.md)
+   - Burn tokens from decompressed CToken account (discriminator: 8, enum: `InstructionType::CTokenBurn`)
+
+13. **CTokenFreezeAccount** - [`docs/ctoken/FREEZE_ACCOUNT.md`](docs/ctoken/FREEZE_ACCOUNT.md)
+   - Freeze decompressed CToken account (discriminator: 10, enum: `InstructionType::CTokenFreezeAccount`)
+
+14. **CTokenThawAccount** - [`docs/ctoken/THAW_ACCOUNT.md`](docs/ctoken/THAW_ACCOUNT.md)
+   - Thaw frozen decompressed CToken account (discriminator: 11, enum: `InstructionType::CTokenThawAccount`)
+
+15. **CTokenMintToChecked** - [`docs/ctoken/MINT_TO_CHECKED.md`](docs/ctoken/MINT_TO_CHECKED.md)
+   - Mint tokens with decimals validation (discriminator: 14, enum: `InstructionType::CTokenMintToChecked`)
+
+16. **CTokenBurnChecked** - [`docs/ctoken/BURN_CHECKED.md`](docs/ctoken/BURN_CHECKED.md)
+   - Burn tokens with decimals validation (discriminator: 15, enum: `InstructionType::CTokenBurnChecked`)
+
+## Config State Requirements Summary
+- **Active only:** Create token account, Create associated token account
+- **Not inactive:** Claim, Withdraw, Compress & Close (via registry)
+
+# Source Code Structure (`src/`)
+
+```
+src/
+├── compressed_token/       # Operations on compressed accounts (in Merkle trees)
+│   ├── mint_action/           # MintAction instruction (103)
+│   └── transfer2/             # Transfer2 instruction (101)
+├── compressible/           # Rent management
+│   ├── claim.rs               # Claim instruction (104)
+│   └── withdraw_funding_pool.rs  # WithdrawFundingPool instruction (105)
+├── ctoken/                 # Operations on CToken Solana accounts (decompressed)
+│   ├── approve_revoke.rs      # CTokenApprove (4), CTokenRevoke (5)
+│   ├── burn.rs                # CTokenBurn (8), CTokenBurnChecked (15)
+│   ├── close/                 # CloseTokenAccount instruction (9)
+│   ├── create.rs              # CreateTokenAccount instruction (18)
+│   ├── create_ata.rs          # CreateAssociatedTokenAccount (100, 102)
+│   ├── freeze_thaw.rs         # CTokenFreezeAccount (10), CTokenThawAccount (11)
+│   ├── mint_to.rs             # CTokenMintTo (7), CTokenMintToChecked (14)
+│   └── transfer/              # CTokenTransfer (3), CTokenTransferChecked (12)
+├── extensions/             # Extension handling
+├── shared/                 # Common utilities
+├── convert_account_infos.rs
+└── lib.rs                  # Entry point and instruction dispatch
+```
+
+## Compressed Token Operations (`compressed_token/`)
+Operations on compressed accounts stored in Merkle trees.
+
+- **`mint_action/`** - MintAction instruction for compressed mint management
+  - `processor.rs` - Main instruction processor
+  - `accounts.rs` - Account validation and parsing
+  - `actions/` - Individual action handlers (create_mint, mint_to, decompress_mint, etc.)
+- **`transfer2/`** - Unified transfer instruction supporting multiple modes
+  - `compression/` - Compress & decompress functionality
+    - `ctoken/` - CToken-specific compression (compress_and_close.rs, decompress.rs, etc.)
+    - `spl.rs` - SPL token compression
+  - `processor.rs` - Main instruction processor
+  - `accounts.rs` - Account validation and parsing
+
+## CToken Operations (`ctoken/`)
+Operations on CToken Solana accounts (decompressed compressed tokens).
+
+- **`create.rs`** - Create regular ctoken accounts with optional compressible extension
+- **`create_ata.rs`** - Create deterministic ATA accounts
+- **`close/`** - Close ctoken accounts, handle rent distribution
+- **`transfer/`** - SPL-compatible transfers between decompressed accounts
+  - `default.rs` - CTokenTransfer (discriminator: 3)
+  - `checked.rs` - CTokenTransferChecked (discriminator: 12)
+  - `shared.rs` - Common transfer utilities
+- **`approve_revoke.rs`** - CTokenApprove (4), CTokenRevoke (5)
+- **`mint_to.rs`** - CTokenMintTo (7), CTokenMintToChecked (14)
+- **`burn.rs`** - CTokenBurn (8), CTokenBurnChecked (15)
+- **`freeze_thaw.rs`** - CTokenFreezeAccount (10), CTokenThawAccount (11)
+
+## Rent Management (`compressible/`)
+- **`claim.rs`** - Claim rent from expired compressible accounts
+- **`withdraw_funding_pool.rs`** - Withdraw funds from rent recipient pool
+
+## Shared Components
+- **`shared/`** - Common utilities used across instructions
+  - `initialize_ctoken_account.rs` - Token account initialization with extensions
+  - `create_pda_account.rs` - PDA creation and validation
+  - `transfer_lamports.rs` - Safe lamport transfer helpers
+  - `compressible_top_up.rs` - Rent top-up calculations for compressible accounts
+  - `owner_validation.rs` - Owner and delegate authority checks
+  - `token_input.rs` / `token_output.rs` - Token data handling utilities
+- **`extensions/`** - Extension handling (compressible, metadata, mint extensions)
+  - `mod.rs` - Extension validation and processing
+  - `check_mint_extensions.rs` - T22 mint extension validation
+  - `token_metadata.rs` - Token metadata extension handling
+  - `processor.rs` - Extension processing utilities
+- **`lib.rs`** - Main entry point and instruction dispatch (contains `InstructionType` enum)
+
+## Data Structures
+All state and instruction data structures are defined in **`program-libs/token-interface/`** (`light-token-interface` crate):
+- **`state/`** - Account state structures
+  - `compressed_token/` - TokenData, hashing
+  - `ctoken/` - CToken (decompressed account) structure
+  - `mint/` - CompressedMint structure
+  - `extensions/` - Extension data (Compressible, TokenMetadata, CompressedOnly, etc.)
+- **`instructions/`** - Instruction data structures for all operations
+  - `transfer2/` - Transfer2 instruction data
+  - `mint_action/` - MintAction instruction data
+  - `extensions/` - Extension instruction data
+
+**Why separate crate:** Data structures are isolated from program logic so SDKs can import types without pulling in program dependencies.
+
+## Error Codes
+Custom error codes are defined in **`programs/compressed-token/anchor/src/lib.rs`** (`anchor_compressed_token::ErrorCode` enum):
+- Contains all program-specific error codes used across compressed token operations
+- Errors are returned as `ProgramError::Custom(error_code as u32)` on-chain
+- CToken-specific errors are also defined in **`program-libs/token-interface/src/error.rs`** (`CTokenError` enum)
+
+### Error Conversion Functions (`shared/convert_program_error.rs`)
+
+Two functions exist for converting pinocchio errors to anchor ProgramError:
+
+| Function | Use Case | Error Mapping |
+|----------|----------|---------------|
+| `convert_pinocchio_token_error` | SPL Token operations via pinocchio_token_program processors | Maps SPL Token error codes (0-18) to named ErrorCode variants |
+| `convert_token_error` | Functions returning TokenError directly (e.g., unpack_amount_and_decimals) | Maps SPL Token error codes (0-18) to named ErrorCode variants |
+| `convert_program_error` | System program, data access, lamport transfers | Adds +6000 offset to raw error code |
+
+**When to use each:**
+
+```rust
+// SPL Token operations - use convert_pinocchio_token_error
+process_transfer(accounts, data).map_err(convert_pinocchio_token_error)?;
+process_burn(accounts, data).map_err(convert_pinocchio_token_error)?;
+process_mint_to(accounts, data).map_err(convert_pinocchio_token_error)?;
+
+// System/internal operations - use convert_program_error
+transfer_lamports_via_cpi(...).map_err(convert_program_error)?;
+account.try_borrow_mut_data().map_err(convert_program_error)?;
+
+// ErrorCode variants - use ProgramError::from directly
+sum_check_multi_mint(...).map_err(ProgramError::from)?;
+validate_mint_uniqueness(...).map_err(ProgramError::from)?;
+```
+
+**SPL Token Error Code Mapping:**
+| SPL Code | ErrorCode Variant | Description |
+|----------|-------------------|-------------|
+| 0 | NotRentExempt | Lamport balance below rent-exempt threshold |
+| 1 | InsufficientFunds | Insufficient funds for the operation |
+| 2 | InvalidMint | Invalid mint account |
+| 3 | MintMismatch | Account not associated with this Mint |
+| 4 | OwnerMismatch | Owner does not match |
+| 5 | FixedSupply | Token supply is fixed |
+| 6 | AlreadyInUse | Account already in use |
+| 7-8 | InvalidNumberOf*Signers | Signer count mismatch |
+| 9 | UninitializedState | State is uninitialized |
+| 10 | NativeNotSupported | Native tokens not supported |
+| 11 | NonNativeHasBalance | Non-native account has balance |
+| 12 | InvalidInstruction | Invalid instruction |
+| 13 | InvalidState | State is invalid |
+| 14 | Overflow | Operation overflowed |
+| 15 | AuthorityTypeNotSupported | Authority type not supported |
+| 16 | MintHasNoFreezeAuthority | Mint cannot freeze |
+| 17 | AccountFrozen | Account is frozen |
+| 18 | MintDecimalsMismatch | Decimals mismatch |
+
+## SDKs (`sdk-libs/`)
+- **`token-sdk/`** - SDK for programs to interact with compressed tokens (CPIs, instruction builders)
+- **`token-client/`** - Client SDK for Rust applications (test helpers, transaction builders)
+- **`light-token-interface/`** - Lightweight types for client-side usage
+
+## Compressible Extension Documentation
+When working with ctoken accounts that have the compressible extension (rent management), you **MUST** read:
+- **`program-libs/compressible/docs/`** - Complete rent system documentation
+  - `RENT.md` - Rent calculations, compressibility checks, lamport distribution
+  - `CONFIG_ACCOUNT.md` - CompressibleConfig account structure
+  - `SOLANA_RENT.md` - Comparison of Solana vs Light Protocol rent systems
+- **Key concepts:**
+  - Rent authority can compress accounts only when `is_compressible()` returns true
+  - Lamport distribution on close: rent → rent_sponsor, unutilized → destination
+  - Compression incentive for foresters when rent authority compresses

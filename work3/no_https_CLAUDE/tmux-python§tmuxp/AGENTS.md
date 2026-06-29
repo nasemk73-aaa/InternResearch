@@ -1,0 +1,468 @@
+# AGENTS.md
+
+This file provides guidance to AI agents (e.g., Claude Code, Cursor, and other LLM-powered tools) when working with code in this repository.
+
+## Project Overview
+
+tmuxp is a session manager for tmux that allows users to save and load tmux sessions through YAML/JSON configuration files. It's powered by libtmux and provides a declarative way to manage tmux sessions.
+
+## Development Commands
+
+### Testing
+- `just test` or `uv run py.test` - Run all tests
+- `uv run py.test tests/path/to/test.py::TestClass::test_method` - Run a single test
+- `uv run ptw .` - Continuous test runner with pytest-watcher
+- `uv run ptw . --now --doctest-modules` - Watch tests including doctests
+- `just start` or `just watch-test` - Watch and run tests on file changes
+
+### Code Quality
+- `just ruff` or `uv run ruff check .` - Run linter
+- `uv run ruff check . --fix --show-fixes` - Fix linting issues automatically
+- `just ruff-format` or `uv run ruff format .` - Format code
+- `just mypy` or `uv run mypy` - Run type checking (strict mode enabled)
+- `just watch-ruff` - Watch and lint on changes
+- `just watch-mypy` - Watch and type check on changes
+
+### Documentation
+- `just build-docs` - Build documentation
+- `just serve-docs` - Serve docs locally at http://localhost:8013
+- `just dev-docs` - Watch and serve docs with auto-reload
+- `just start-docs` - Alternative to dev_docs
+
+### CLI Commands
+- `tmuxp load <config>` - Load a tmux session from config
+- `tmuxp load -d <config>` - Load session in detached state
+- `tmuxp freeze <session-name>` - Export running session to config
+- `tmuxp convert <file>` - Convert between YAML and JSON
+- `tmuxp shell` - Interactive Python shell with tmux context
+- `tmuxp debug-info` - Collect system info for debugging
+
+## Architecture
+
+### Core Components
+
+1. **CLI Module** (`src/tmuxp/cli/`): Entry points for all tmuxp commands
+   - `load.py`: Load tmux sessions from config files
+   - `freeze.py`: Export live sessions to config files
+   - `convert.py`: Convert between YAML/JSON formats
+   - `shell.py`: Interactive Python shell with tmux context
+
+2. **Workspace Module** (`src/tmuxp/workspace/`): Core session management
+   - `builder.py`: Builds tmux sessions from configuration
+   - `loader.py`: Loads and validates config files
+   - `finders.py`: Locates workspace config files
+   - `freezer.py`: Exports running sessions to config
+
+3. **Plugin System** (`src/tmuxp/plugin.py`): Extensibility framework
+   - Plugins extend `TmuxpPlugin` base class
+   - Hooks: `before_workspace_builder`, `on_window_create`, `after_window_finished`, `before_script`, `reattach`
+   - Version constraint checking for compatibility
+
+### Configuration Flow
+
+1. Load YAML/JSON config via `ConfigReader` (handles includes, environment variables)
+2. Expand inline shorthand syntax
+3. Trickle down default values (session → window → pane)
+4. Validate configuration structure
+5. Build tmux session via `WorkspaceBuilder`
+
+### Key Patterns
+
+- **Type Safety**: All code uses type hints with mypy strict mode
+- **Error Handling**: Custom exception hierarchy based on `TmuxpException`
+- **Testing**: Pytest with fixtures for tmux server/session/window/pane isolation
+- **Future Imports**: All files use `from __future__ import annotations`
+
+## Configuration Format
+
+```yaml
+session_name: my-session
+start_directory: ~/project
+windows:
+  - window_name: editor
+    layout: main-vertical
+    panes:
+      - shell_command:
+          - vim
+      - shell_command:
+          - git status
+```
+
+## Environment Variables
+
+- `TMUXP_CONFIGDIR`: Custom directory for workspace configs
+- `TMUX_CONF`: Path to tmux configuration file
+- `TMUXP_DEFAULT_COLUMNS/ROWS`: Default session dimensions
+
+## Testing Guidelines
+
+- **Use functional tests only**: Write tests as standalone functions, not classes. Avoid `class TestFoo:` groupings - use descriptive function names and file organization instead.
+- Use pytest fixtures from `tests/fixtures/` for tmux objects
+- Test plugins using mock packages in `tests/fixtures/pluginsystem/`
+- Use `retry_until` utilities for async tmux operations
+- Run single tests with: `uv run py.test tests/file.py::test_function_name`
+- **Use libtmux fixtures**: Prefer `server`, `session`, `window`, `pane` fixtures over manual setup
+- **Avoid mocks when fixtures exist**: Use real tmux fixtures instead of `MagicMock`
+- **Use `tmp_path`** fixture instead of Python's `tempfile`
+- **Use `monkeypatch`** fixture instead of `unittest.mock`
+
+## Code Style
+
+- Follow NumPy-style docstrings (pydocstyle convention)
+- Use ruff for formatting and linting
+- Maintain strict mypy type checking
+- Keep imports organized with future annotations at top
+- **Prefer namespace imports for stdlib**: Use `import enum` and `enum.Enum` instead of `from enum import Enum`; third-party packages may use `from X import Y`
+- **Type imports**: Use `import typing as t` and access via namespace (e.g., `t.Optional`)
+- **Development workflow**: Format → Test → Commit → Lint/Type Check → Test → Final Commit
+
+## Git Commit Standards
+
+Format commit messages as:
+```
+Scope(type[detail]): concise description
+
+why: Explanation of necessity or impact.
+what:
+- Specific technical changes made
+- Focused on a single topic
+```
+
+Common commit types:
+- **feat**: New features or enhancements
+- **fix**: Bug fixes
+- **refactor**: Code restructuring without functional change
+- **docs**: Documentation updates
+- **chore**: Maintenance (dependencies, tooling, config)
+- **test**: Test-related updates
+- **style**: Code style and formatting
+- **py(deps)**: Dependencies
+- **py(deps[dev])**: Dev Dependencies
+- **ai(rules[AGENTS])**: AI rule updates
+- **ai(claude[rules])**: Claude Code rules (CLAUDE.md)
+- **ai(claude[command])**: Claude Code command changes
+
+Example:
+```
+Pane(feat[send_keys]): Add support for literal flag
+
+why: Enable sending literal characters without tmux interpretation
+what:
+- Add literal parameter to send_keys method
+- Update send_keys to pass -l flag when literal=True
+- Add tests for literal key sending
+```
+For multi-line commits, use heredoc to preserve formatting:
+```bash
+git commit -m "$(cat <<'EOF'
+feat(Component[method]) add feature description
+
+why: Explanation of the change.
+what:
+- First change
+- Second change
+EOF
+)"
+```
+
+## Logging Standards
+
+These rules guide future logging changes; existing code may not yet conform.
+
+### Logger setup
+
+- Use `logging.getLogger(__name__)` in every module
+- Add `NullHandler` in library `__init__.py` files
+- Never configure handlers, levels, or formatters in library code — that's the application's job
+
+### Structured context via `extra`
+
+Pass structured data on every log call where useful for filtering, searching, or test assertions.
+
+**Core keys** (stable, scalar, safe at any log level):
+
+| Key | Type | Context |
+|-----|------|---------|
+| `tmux_cmd` | `str` | tmux command line |
+| `tmux_subcommand` | `str` | tmux subcommand (e.g. `new-session`) |
+| `tmux_target` | `str` | tmux target specifier (e.g. `mysession:1.2`) |
+| `tmux_exit_code` | `int` | tmux process exit code |
+| `tmux_session` | `str` | session name |
+| `tmux_window` | `str` | window name or index |
+| `tmux_pane` | `str` | pane identifier |
+| `tmux_config_path` | `str` | workspace config file path |
+| `tmux_layout` | `str` | window layout string |
+
+**Heavy/optional keys** (DEBUG only, potentially large):
+
+| Key | Type | Context |
+|-----|------|---------|
+| `tmux_stdout` | `list[str]` | tmux stdout lines (truncate or cap; `%(tmux_stdout)s` produces repr) |
+| `tmux_stderr` | `list[str]` | tmux stderr lines (same caveats) |
+
+Treat established keys as compatibility-sensitive — downstream users may build dashboards and alerts on them. Change deliberately.
+
+### Key naming rules
+
+- `snake_case`, not dotted; `tmux_` prefix
+- Prefer stable scalars; avoid ad-hoc objects
+- Heavy keys (`tmux_stdout`, `tmux_stderr`) are DEBUG-only; consider companion `tmux_stdout_len` fields or hard truncation (e.g. `stdout[:100]`)
+
+### Lazy formatting
+
+`logger.debug("msg %s", val)` not f-strings. Two rationales:
+- Deferred string interpolation: skipped entirely when level is filtered
+- Aggregator message template grouping: `"Running %s"` is one signature grouped ×10,000; f-strings make each line unique
+
+When computing `val` itself is expensive, guard with `if logger.isEnabledFor(logging.DEBUG)`.
+
+### stacklevel for wrappers
+
+Increment for each wrapper layer so `%(filename)s:%(lineno)d` and OTel `code.filepath` point to the real caller. Verify whenever call depth changes.
+
+### LoggerAdapter for persistent context
+
+For objects with stable identity (Session, Window, Pane), use `LoggerAdapter` to avoid repeating the same `extra` on every call. Lead with the portable pattern (override `process()` to merge); `merge_extra=True` simplifies this on Python 3.13+.
+
+### Log levels
+
+| Level | Use for | Examples |
+|-------|---------|----------|
+| `DEBUG` | Internal mechanics, tmux I/O, config expansion | tmux command + stdout, trickle-down steps |
+| `INFO` | Session lifecycle, user-visible operations | Session created, window added, workspace loaded |
+| `WARNING` | Recoverable issues, deprecation, user-actionable config | Deprecated key, missing optional program |
+| `ERROR` | Failures that stop an operation | tmux command failed, config validation error |
+
+Config discovery noise belongs in `DEBUG`; only surprising/user-actionable config issues → `WARNING`.
+
+### Message style
+
+- Lowercase, past tense for events: `"session created"`, `"tmux command failed"`
+- No trailing punctuation
+- Keep messages short; put details in `extra`, not the message string
+
+### Exception logging
+
+- Use `logger.exception()` only inside `except` blocks when you are **not** re-raising
+- Use `logger.error(..., exc_info=True)` when you need the traceback outside an `except` block
+- Avoid `logger.exception()` followed by `raise` — this duplicates the traceback. Either add context via `extra` that would otherwise be lost, or let the exception propagate
+
+### Testing logs
+
+Assert on `caplog.records` attributes, not string matching on `caplog.text`:
+- Scope capture: `caplog.at_level(logging.DEBUG, logger="libtmux.common")`
+- Filter records rather than index by position: `[r for r in caplog.records if hasattr(r, "tmux_cmd")]`
+- Assert on schema: `record.tmux_exit_code == 0` not `"exit code 0" in caplog.text`
+- `caplog.record_tuples` cannot access extra fields — always use `caplog.records`
+
+### Output channels
+
+Two output channels serve different audiences:
+
+1. **Diagnostics** (`logger.*()` with `extra`): System events for log files, `caplog`, and aggregators. Never styled.
+2. **User-facing output**: What the human sees. Styled via `Colors` class.
+   - Commands with output modes (`--json`/`--ndjson`): prefer `OutputFormatter.emit_text()` from `tmuxp.cli._output` — silenced in non-human modes.
+   - Human-only commands: use `tmuxp_echo()` from `tmuxp.log` (re-exported via `tmuxp.cli.utils`) for user-facing messages.
+   - **Undefined contracts:** Machine-output behavior for error and empty-result paths (e.g., `search` with no matches) is not yet defined. These paths currently emit styled text through `formatter.emit_text()`, which is a no-op in machine modes.
+
+Raw `print()` is forbidden in command/business logic. The `print()` call lives only inside the presenter layer (`_output.py`) or `tmuxp_echo`.
+
+### Avoid
+
+- f-strings/`.format()` in log calls
+- Unguarded logging in hot loops (guard with `isEnabledFor()`)
+- Catch-log-reraise without adding new context
+- `print()` for debugging or internal diagnostics — use `logger.debug()` with structured `extra` instead
+- Logging secret env var values (log key names only)
+- Non-scalar ad-hoc objects in `extra`
+- Requiring custom `extra` fields in format strings without safe defaults (missing keys raise `KeyError`)
+
+## Doctests
+
+**All functions and methods MUST have working doctests.** Doctests serve as both documentation and tests.
+
+**CRITICAL RULES:**
+- Doctests MUST actually execute - never comment out function calls or similar
+- Doctests MUST NOT be converted to `.. code-block::` as a workaround (code-blocks don't run)
+- If you cannot create a working doctest, **STOP and ask for help**
+
+**Available tools for doctests:**
+- `doctest_namespace` fixtures: `server`, `session`, `window`, `pane`, `tmp_path`, `test_utils`
+- Ellipsis for variable output: `# doctest: +ELLIPSIS`
+- Update `conftest.py` to add new fixtures to `doctest_namespace`
+
+**`# doctest: +SKIP` is NOT permitted** - it's just another workaround that doesn't test anything. Use the fixtures properly - tmux is required to run tests anyway.
+
+**Using fixtures in doctests:**
+```python
+>>> from tmuxp.workspace.builder import WorkspaceBuilder
+>>> config = {'session_name': 'test', 'windows': [{'window_name': 'main'}]}
+>>> builder = WorkspaceBuilder(session_config=config, server=server)  # doctest: +ELLIPSIS
+>>> builder.build()
+>>> builder.session.name
+'test'
+```
+
+**When output varies, use ellipsis:**
+```python
+>>> session.session_id  # doctest: +ELLIPSIS
+'$...'
+>>> window.window_id  # doctest: +ELLIPSIS
+'@...'
+```
+
+**Additional guidelines:**
+1. **Use narrative descriptions** for test sections rather than inline comments
+2. **Move complex examples** to dedicated test files at `tests/examples/<path>/test_<example>.py`
+3. **Keep doctests simple and focused** on demonstrating usage
+4. **Add blank lines between test sections** for improved readability
+
+**Doctest exceptions** (patterns where doctests are not required):
+
+1. **Sphinx/docutils `visit_*`/`depart_*` methods** - tested via integration tests; 0 examples across docutils (851 methods), Sphinx (800+), and CPython's `ast.NodeVisitor`
+2. **Sphinx `setup()` functions** - entry points not testable in isolation
+3. **Complex recursive traversal functions** - extract helper predicates instead
+
+**Best practice for node processing**: Extract testable helper functions (like `_is_usage_block()`) and doctest those. Keep complex visitor logic in integration tests.
+
+## Documentation Standards
+
+### Code Blocks in Documentation
+
+When writing documentation (README, CHANGES, docs/), follow these rules for code blocks:
+
+**One command per code block.** This makes commands individually copyable. For sequential commands, either use separate code blocks or chain them with `&&` or `;` and `\` continuations (keeping it one logical command).
+
+**Put explanations outside the code block**, not as comments inside.
+
+Good:
+
+Run the tests:
+
+```console
+$ uv run pytest
+```
+
+Run with coverage:
+
+```console
+$ uv run pytest --cov
+```
+
+Bad:
+
+```console
+# Run the tests
+$ uv run pytest
+
+# Run with coverage
+$ uv run pytest --cov
+```
+
+### Shell Command Formatting
+
+These rules apply to shell commands in documentation (README, CHANGES, docs/), **not** to Python doctests.
+
+**Use `console` language tag with `$ ` prefix.** This distinguishes interactive commands from scripts and enables prompt-aware copy in many terminals.
+
+Good:
+
+```console
+$ uv run pytest
+```
+
+Bad:
+
+```bash
+uv run pytest
+```
+
+**Split long commands with `\` for readability.** Each flag or flag+value pair gets its own continuation line, indented. Positional parameters go on the final line.
+
+Good:
+
+```console
+$ pipx install \
+    --suffix=@next \
+    --pip-args '\--pre' \
+    --force \
+    'tmuxp'
+```
+
+Bad:
+
+```console
+$ pipx install --suffix=@next --pip-args '\--pre' --force 'tmuxp'
+```
+
+## Important Notes
+
+- **QA every edit**: Run formatting and tests before committing
+- **Minimum Python**: 3.10+ (per pyproject.toml)
+- **Minimum tmux**: 3.2+ (as per README)
+
+## CLI Color Semantics (Revision 1, 2026-01-04)
+
+The CLI uses semantic colors via the `Colors` class in `src/tmuxp/_internal/colors.py`. Colors are chosen based on **hierarchy level** and **semantic meaning**, not just data type.
+
+### Design Principles
+
+1. **Structural hierarchy**: Headers > Items > Details
+2. **Semantic meaning**: What IS this element?
+3. **Visual weight**: What should draw the eye first?
+4. **Depth separation**: Parent elements should visually contain children
+
+Inspired by patterns from **jq** (object keys vs values), **ripgrep** (path/line/match distinction), and **mise/just** (semantic method names).
+
+### Hierarchy-Based Colors
+
+| Level | Element Type | Method | Color | Examples |
+|-------|--------------|--------|-------|----------|
+| **L0** | Section headers | `heading()` | Bright cyan + bold | "Local workspaces:", "Global workspaces:" |
+| **L1** | Primary content | `highlight()` | Magenta + bold | Workspace names (braintree, .tmuxp) |
+| **L2** | Supplementary info | `info()` | Cyan | Paths (~/.tmuxp, ~/project/.tmuxp.yaml) |
+| **L3** | Metadata/labels | `muted()` | Blue | Source labels (Legacy:, XDG default:) |
+
+### Status-Based Colors (Override hierarchy when applicable)
+
+| Status | Method | Color | Examples |
+|--------|--------|-------|----------|
+| Success/Active | `success()` | Green | "active", "18 workspaces" |
+| Warning | `warning()` | Yellow | Deprecation notices |
+| Error | `error()` | Red | Error messages |
+
+### Example Output
+
+```
+Local workspaces:                              ← heading() bright_cyan+bold
+  .tmuxp  ~/work/python/tmuxp/.tmuxp.yaml      ← highlight() + info()
+
+Global workspaces (~/.tmuxp):                  ← heading() + info()
+  braintree                                    ← highlight()
+  cihai                                        ← highlight()
+
+Global workspace directories:                  ← heading()
+  Legacy: ~/.tmuxp (18 workspaces, active)     ← muted() + info() + success()
+  XDG default: ~/.config/tmuxp (not found)     ← muted() + info() + muted()
+```
+
+### Available Methods
+
+```python
+colors = Colors()
+colors.heading("Section:")      # Cyan + bold (section headers)
+colors.highlight("item")        # Magenta + bold (primary content)
+colors.info("/path/to/file")    # Cyan (paths, supplementary info)
+colors.muted("label:")          # Blue (metadata, labels)
+colors.success("ok")            # Green (success states)
+colors.warning("caution")       # Yellow (warnings)
+colors.error("failed")          # Red (errors)
+```
+
+### Key Rules
+
+**Never use the same color for adjacent hierarchy levels.** If headers and items are both blue, they blend together. Each level must be visually distinct.
+
+**Avoid dim/faint styling.** The ANSI dim attribute (`\x1b[2m`) is too dark to read on black terminal backgrounds. This includes both standard and bright color variants with dim.
+
+**Bold may not render distinctly.** Some terminal/font combinations don't differentiate bold from normal weight. Don't rely on bold alone for visual distinction - pair it with color differences.

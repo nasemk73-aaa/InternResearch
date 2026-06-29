@@ -1,0 +1,213 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Environment Setup
+
+This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
+
+```bash
+# Install all dependencies (core + dev + UI)
+uv sync --extra ui
+```
+
+## Build & Test Commands
+
+All commands use `uv run` to execute within the managed environment.
+
+```bash
+# Run all tests
+uv run pytest tests/ -v
+
+# Run a specific test file
+uv run pytest tests/test_strategies.py -v
+
+# Run tests matching a pattern
+uv run pytest tests/ -k "butterfly"
+
+# Check code formatting
+uv run ruff format --check optopsy/ tests/
+
+# Auto-format code
+uv run ruff format optopsy/ tests/
+
+# Lint code
+uv run ruff check optopsy/ tests/
+
+# Lint and auto-fix
+uv run ruff check --fix optopsy/ tests/
+
+# Type check
+uv run ty check optopsy/
+
+# Run tests with coverage
+uv run pytest tests/ -v --cov=optopsy --cov-report=term-missing
+```
+
+## Architecture Overview
+
+Optopsy is a backtesting library for options strategies. It processes historical option chain data and generates performance statistics.
+
+### Data Flow
+
+1. **Input**: CSV with option chain data (underlying_symbol, option_type, expiration, quote_date, strike, bid, ask, delta; optional: underlying_price, close)
+2. **Load**: `datafeeds.csv_data()` normalizes and imports the data
+3. **Process**: Strategy functions in `strategies.py` call `core._process_strategy()` which:
+   - Filters options by DTE, OTM %, bid-ask spread
+   - Matches entry/exit prices across dates
+   - Builds multi-leg positions via pandas merges
+   - Applies strategy-specific rules (strike ordering, butterfly constraints)
+   - Calculates P&L and percentage change
+4. **Output**: DataFrame with either raw combinations or aggregated statistics (grouped by DTE intervals and OTM ranges)
+
+### Key Modules
+
+- **`strategies.py`** - Public API. Each strategy function (e.g., `long_calls`, `iron_condor`) wraps a helper that calls `_process_strategy()`
+- **`core.py`** - Strategy execution engine. `_process_strategy()` orchestrates the pipeline; `_strategy_engine()` handles multi-leg joins
+- **`rules.py`** - Strike validation rules (ascending order, butterfly equal-width wings, iron condor/butterfly constraints)
+- **`definitions.py`** - Column definitions for 1/2/3/4-leg strategy outputs
+- **`checks.py`** - Input validation for parameters and DataFrame dtypes
+- **`datafeeds.py`** - CSV import with flexible column mapping
+
+### Adding a New Strategy
+
+1. Add public function in `strategies.py` that calls a helper (or create new helper)
+2. Helper should call `_process_strategy()` with appropriate `leg_def`, `rules`, and column definitions
+3. Add validation rule in `rules.py` if strategy has strike constraints
+4. Update `definitions.py` if new column structure needed
+5. Export in `__init__.py`
+6. Add tests in `tests/test_strategies.py`
+
+### Side Enum
+
+```python
+class Side(Enum):
+    long = 1    # Buy (positive multiplier)
+    short = -1  # Sell (negative multiplier)
+```
+
+Leg definitions use tuples: `(Side.long, _calls, quantity)` where quantity defaults to 1.
+
+## Data Package (`optopsy/data/`)
+
+Standalone data management package — no Chainlit dependency. Provides CLI, providers, and caching.
+
+### CLI (`optopsy-data`)
+
+```bash
+# Install with data extras
+uv sync --extra data
+
+# Download historical options data (requires EODHD_API_KEY)
+uv run optopsy-data download SPY       # download single symbol
+uv run optopsy-data download SPY AAPL  # download multiple symbols
+uv run optopsy-data download SPY -s    # download stock prices
+uv run optopsy-data download SPY -v    # verbose/debug logging
+
+# List available symbols
+uv run optopsy-data symbols
+uv run optopsy-data symbols -q SPY
+
+# Cache management
+uv run optopsy-data cache size          # show disk usage
+uv run optopsy-data cache clear         # clear all cached data
+uv run optopsy-data cache clear SPY     # clear specific symbol
+```
+
+### Module Structure
+
+- **`cli.py`** — CLI entry point (`optopsy-data`). Argparse with `download`, `symbols`, and `cache` subcommands.
+- **`paths.py`** — Base data directory resolution (`~/.optopsy` or `OPTOPSY_DATA_DIR`).
+- **`_compat.py`** — Compatibility utilities.
+- **`_dataframe_utils.py`** — DataFrame helper functions.
+- **`_yf_helpers.py`** — Yahoo Finance data helpers.
+
+### Data Providers (`optopsy/data/providers/`)
+
+Pluggable provider system for fetching market data.
+
+- **`base.py`** — Abstract `DataProvider` interface. Requires `name`, `env_key`, `get_tool_schemas()`, `execute(tool_name, arguments)`.
+- **`eodhd.py`** — `EODHDProvider`. Fetches options chains and stock prices from EODHD API. Smart caching with gap detection.
+- **`cache.py`** — `ParquetCache`. File-based cache at `~/.optopsy/cache/{category}/{SYMBOL}.parquet`.
+- **`result_store.py`** — Strategy result storage.
+
+## AI Chat UI (`optopsy/ui/`)
+
+An AI-powered chat interface for interactive options backtesting, built on Chainlit + LiteLLM.
+
+### Running
+
+```bash
+# Install with UI extras
+uv sync --extra ui
+
+# Launch (opens browser)
+uv run optopsy-chat
+
+# With options
+uv run optopsy-chat run --port 9000 --headless --debug
+```
+
+### Configuration
+
+Environment variables (set in `.env` or shell):
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | LLM provider API key (default provider) |
+| `OPENAI_API_KEY` | Alternative LLM provider |
+| `OPTOPSY_MODEL` | Override model (LiteLLM format, default: `anthropic/claude-haiku-4-5-20251001`) |
+| `EODHD_API_KEY` | Enable EODHD data provider for live options/stock data |
+
+### Module Structure
+
+- **`cli.py`** — CLI entry point (`optopsy-chat`). Argparse with `run` subcommand. Lazy imports so non-`run` commands skip Chainlit startup.
+- **`app.py`** — Chainlit web app. Handlers for `on_chat_start`, `on_chat_resume`, `on_message`. Delegates to `OptopsyAgent`.
+- **`agent.py`** — `OptopsyAgent` class. Tool-calling loop over LiteLLM with streaming, message compaction (`_COMPACT_THRESHOLD = 300`), and max `_MAX_TOOL_ITERATIONS = 15`.
+- **`tools.py`** — Tool registry. Core tools: `load_csv_data`, `list_data_files`, `preview_data`, `run_strategy` (all 38 strategies). Provider tools registered dynamically.
+
+### Adding a New Data Provider
+
+1. Subclass `DataProvider` in `optopsy/data/providers/`
+2. Implement `name`, `env_key`, `get_tool_schemas()`, `get_tool_names()`, `execute()`
+3. Register in `providers/__init__.py`
+4. Provider is auto-detected if its `env_key` is set
+
+## Git Branching Convention
+
+Branch names are enforced by a `pre-push` hook (via pre-commit). All branches must use one of these prefixes:
+
+| Prefix | Use case |
+|---|---|
+| `feature/` | New features |
+| `fix/` | Bug fixes |
+| `bugfix/` | Bug fixes (alias) |
+| `hotfix/` | Urgent production fixes |
+| `release/` | Release preparation |
+| `claude/` | Claude-generated branches |
+| `copilot/` | Copilot-generated branches |
+| `main` | Main branch (no prefix) |
+
+Example: `feature/add-iron-condor-strategy`, `fix/dte-filter-bug`, `claude/refactor-core`
+
+After cloning, install the pre-push hook:
+
+```bash
+uv run pre-commit install --hook-type pre-push
+```
+
+## Releasing
+
+Publishing to PyPI is automated via GitHub Actions (`.github/workflows/python-publish.yml`) using trusted publishing. To release:
+
+1. Update `version` in `pyproject.toml` (e.g., `"2.3.0"`, or `"2.3.0b1"` for pre-releases)
+2. Commit and push the version bump
+3. Create a GitHub release via `gh release create`:
+   ```bash
+   # Stable release
+   gh release create v2.3.0 --title "v2.3.0" --notes "Release notes here"
+
+   # Pre-release / beta
+   gh release create v2.3.0b1 --title "v2.3.0b1" --notes "Release notes here" --prerelease
+   ```
+4. The workflow automatically builds and publishes to PyPI — no API tokens needed locally

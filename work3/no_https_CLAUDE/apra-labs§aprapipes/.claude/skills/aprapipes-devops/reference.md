@@ -1,0 +1,1231 @@
+# ApraPipes DevOps Reference
+
+Cross-platform reference for vcpkg configuration, GitHub Actions, caching, and version management.
+
+---
+
+## Architecture Overview
+
+### New Unified CI/CD Architecture (Dec 2025)
+
+**Top-Level Workflows:**
+1. **CI-Windows.yml** - Windows builds with CUDA, cloud runners
+2. **CI-Linux.yml** - Linux x64 builds with CUDA, cloud runners + Docker
+3. **CI-Linux-ARM64.yml** - Jetson ARM64 builds, self-hosted
+4. **CI-MacOSX-NoCUDA.yml** - macOS builds, cloud runners
+
+**Reusable Workflow Hierarchy:**
+```
+CI-Windows.yml / CI-Linux.yml
+└── build-test.yml (name: "ci")
+    ├── build job → cloud tests → TestResults_{flav}
+    ├── report job → publish-test.yml → badge_{flav}.svg
+    ├── cuda job → CI-CUDA-Tests.yml → TestResults_{flav}-CUDA
+    │   └── gpu-test → badge_{flav}-CUDA.svg
+    └── docker job (Linux only) → build-test-lin-container.yml
+        └── docker-report → badge_Linux-Docker.svg
+```
+
+**Key Changes from Old Architecture:**
+- **Old**: Separate CI-Win-NoCUDA.yml, CI-Win-CUDA.yml, CI-Linux-NoCUDA.yml, CI-Linux-CUDA.yml, CI-Linux-CUDA-Docker.yml
+- **New**: Unified CI-Windows.yml and CI-Linux.yml that run build, CUDA tests, and Docker tests as nested jobs
+- **CUDA tests**: Run on self-hosted GPU runners via CI-CUDA-Tests.yml (called as reusable workflow)
+- **Docker builds**: Nested within CI-Linux.yml, not a separate workflow
+- **Badge names**: Use `flav` parameter - Windows, Windows-CUDA, Linux, Linux-CUDA, Linux-Docker, Linux_ARM64, MacOSX
+
+### Build Strategies by Workflow
+
+| Workflow | Runner Type | Build Strategy | CUDA | Time Limit | Caching |
+|----------|-------------|----------------|------|------------|---------|
+| CI-Windows (build) | GitHub-hosted | Single-phase | Installed | 6 hours | Yes |
+| CI-Windows (cuda) | Self-hosted | Tests only | Required | None | No |
+| CI-Linux (build) | GitHub-hosted | Single-phase | Installed | 6 hours | Yes |
+| CI-Linux (cuda) | Self-hosted | Tests only | Required | None | No |
+| CI-Linux (docker) | Container | Containerized | Optional | Varies | Optional |
+| CI-Linux-ARM64 | Self-hosted | Single-phase | Required | None | Limited |
+| CI-MacOSX-NoCUDA | GitHub-hosted | Single-phase | None | 6 hours | Yes |
+
+**Terminology Note: macOS vs MacOSX**
+- **User-facing documentation**: Use "macOS" (Apple's official branding)
+- **Technical identifiers**: Use "MacOSX" (workflow names like `CI-MacOSX-NoCUDA.yml`, cache keys like `MacOSX-5-`)
+- **Rationale**: Technical identifiers maintain consistency with existing infrastructure and avoid filesystem/URL complications
+
+### Build Strategy: Single-Phase with Nested CUDA Tests
+
+**Cloud Runners (CI-Windows, CI-Linux, CI-MacOSX-NoCUDA):**
+- **Build phase**: Full build with CUDA toolkit installed on cloud runners (6 hour timeout)
+- **CUDA tests**: If CUDA enabled, nested job calls CI-CUDA-Tests.yml on self-hosted GPU runners
+- **Result**: TestResults_{flav} (cloud) + TestResults_{flav}-CUDA (GPU) artifacts
+
+**Self-Hosted Runners (CI-Linux-ARM64):**
+- Single-phase build and test on same runner
+- No caching needed (persistent disk)
+- No time limits
+
+**Old Two-Phase Strategy (Deprecated as of Dec 2025):**
+- Phase 1 (prep/cache) and Phase 2 (build/test) were replaced by single-phase builds
+- Caching now happens within build job using cache restore/save pattern
+
+---
+
+## vcpkg Configuration
+
+### File Structure
+
+```
+base/
+├── vcpkg.json                 # Dependency manifest
+├── vcpkg-configuration.json   # Registry and baseline
+└── fix-vcpkg-json.ps1        # Runtime manifest modifier
+
+vcpkg/
+├── scripts/
+│   └── vcpkg-tools.json      # Tool versions (Python, CMake)
+└── scripts/buildsystems/
+    └── vcpkg.cmake           # CMake toolchain file
+```
+
+### vcpkg.json - Dependency Manifest
+
+**Location**: `base/vcpkg.json`
+
+**Structure**:
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg/master/scripts/vcpkg.schema.json",
+  "name": "apra-pipes-cuda",
+  "version": "0.0.1",
+  "builtin-baseline": "4658624c5f19c1b468b62fe13ed202514dfd463e",
+
+  "overrides": [
+    { "name": "ffmpeg", "version": "4.4.3" },
+    { "name": "libarchive", "version": "3.5.2" },
+    { "name": "sfml", "version": "2.6.2" }
+  ],
+
+  "dependencies": [
+    "pkgconf",
+    { "name": "opencv4", "features": ["contrib", "cuda", ...] },
+    "boost-system",
+    // ... more dependencies
+  ]
+}
+```
+
+**Key Sections**:
+- `builtin-baseline`: Not used (overridden by vcpkg-configuration.json)
+- `overrides`: Version pins for specific packages (CRITICAL for stability)
+- `dependencies`: List of required packages with optional features/platforms
+
+### vcpkg-configuration.json - Registry and Baseline
+
+**Location**: `vcpkg/baseline.json`
+
+**Structure**:
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg-configuration.schema.json",
+
+  "overlay-ports": [
+    "../thirdparty/custom-overlay"
+  ],
+
+  "default-registry": {
+    "kind": "git",
+    "repository": "https://github.com/Apra-Labs/vcpkg.git",
+    "baseline": "3011303ba1f6586e8558a312d0543271fca072c6"
+  }
+}
+```
+
+**CRITICAL**: The baseline commit MUST be:
+- Advertised by `git ls-remote` (branch tip or tag)
+- From a repository with version database (`versions/` directory)
+- Accessible without authentication
+
+### vcpkg-tools.json - Tool Versions
+
+**Location**: `vcpkg/scripts/vcpkg-tools.json`
+
+**CRITICAL Python Version**:
+```json
+{
+  "name": "python3",
+  "os": "windows",
+  "version": "3.10.11",  // MUST be 3.10.x (has distutils)
+  "executable": "python.exe",
+  "url": "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip",
+  "sha512": "40cbc98137cc7768e3ea498920ddffd0b3b30308bfd7bbab2ed19d93d2e89db6b4430c7b54a0f17a594e8e10599537a643072e08cfd1a38c284f8703879dcc17"
+}
+```
+
+**Why 3.10.x**: Python 3.12+ removed `distutils` module required by glib and other packages.
+
+### Python Version Update Policy
+
+**Current Version**: 3.10.11 (has distutils module)
+
+**Upgrade Timing**: When vcpkg drops support for Python 3.10.x
+
+**Version Constraints**:
+- Minimum: 3.10.x (requires distutils support)
+- Maximum: < 3.12 (distutils removed in Python 3.12+)
+
+**Testing Required on Update**:
+- All platforms build successfully
+- glib package builds without errors
+- Verify distutils availability
+
+### fix-vcpkg-json.ps1 - Build Configuration Script
+
+**Location**: `base/fix-vcpkg-json.ps1`
+
+PowerShell script to modify `vcpkg.json` at runtime during CI builds. Used for:
+- Two-phase builds (Phase 1: cache heavy dependencies like OpenCV)
+- Platform-specific builds (remove CUDA packages for NoCUDA builds)
+
+**Parameters**:
+- `-removeCUDA`: Remove CUDA-related packages for NoCUDA builds
+- `-onlyOpenCV`: Keep only OpenCV (for Phase 1 dependency caching)
+
+**Usage in Workflows**:
+
+```yaml
+- name: Remove CUDA from vcpkg if we are in nocuda
+  if: ${{ contains(inputs.cuda,'OFF')}}
+  working-directory: ${{github.workspace}}/base
+  run: .\fix-vcpkg-json.ps1 -removeCUDA
+  shell: pwsh
+
+- name: Leave only OpenCV from vcpkg during prep phase
+  if: inputs.is-prep-phase
+  working-directory: ${{github.workspace}}/base
+  run: .\fix-vcpkg-json.ps1 -onlyOpenCV
+  shell: pwsh
+```
+
+**Why This Approach**:
+- Two-phase builds: Phase 1 installs OpenCV (~40 min), caches it, then Phase 2 uses cache for fast full build
+- Avoids maintaining multiple vcpkg.json files
+- Enables conditional dependency installation based on workflow inputs
+
+---
+
+## Version Pinning Strategy
+
+### Core Principle
+**Pin major versions of all production dependencies to avoid breaking changes.**
+
+### Why Version Pinning Matters
+
+When updating vcpkg baseline WITHOUT version overrides:
+- ❌ Any package can jump to new major version
+- ❌ Breaking API changes silently break builds
+- ❌ Errors appear unrelated to dependency update
+- ❌ "Worked yesterday" syndrome - non-reproducible builds
+
+### Current Pinned Versions (as of 2024-11-28)
+
+```json
+"overrides": [
+  { "name": "ffmpeg", "version": "4.4.3" },      // Pinned to 4.x
+  { "name": "libarchive", "version": "3.5.2" },  // Pinned to 3.x
+  { "name": "sfml", "version": "2.6.2" }         // Pinned to 2.x (SFML 3.x has breaking changes)
+]
+```
+
+### Version Pinning Tiers
+
+**Tier 1 - MUST Pin** (Critical Dependencies):
+- Packages with complex APIs your code directly uses
+- Libraries with history of breaking changes between major versions
+- Current: opencv4, boost, gtk3, sfml, ffmpeg
+
+**Tier 2 - Consider Pinning** (Medium Risk):
+- Packages used in specific modules
+- Rapidly evolving libraries (AI/ML)
+- Current: whisper, nu-book-zxing-cpp
+
+**Tier 3 - Can Use Baseline** (Low Risk):
+- Utilities that rarely have breaking API changes
+- Updated primarily for security/bug fixes
+- Current: pkgconf, zlib, bzip2, liblzma, brotli
+
+### When to Update Pinned Versions
+
+**Process**:
+1. Create dedicated branch: `update/opencv-4.8-to-4.9`
+2. Update version override in vcpkg.json
+3. Review upstream changelog for breaking changes
+4. Test build thoroughly
+5. If code changes needed → escalate to developers
+6. Document migration in commit message
+7. Merge only after verification
+
+**DevOps Role**: Fix build config, NOT application code to accommodate new versions.
+
+---
+
+## vcpkg Fork Management Best Practices
+
+### CRITICAL: Never Modify Master Branches
+
+**❌ NEVER DO THIS:**
+```bash
+# DON'T push to master of forks
+git checkout master
+git merge fix/my-changes
+git push origin master  # DANGEROUS - breaks other builds!
+```
+
+**Why This Is Dangerous**:
+- Other builds/projects may depend on the fork's master
+- Can break production CI pipelines
+- Hard to revert without force-push (often blocked)
+- Violates protected branch policies
+
+**✅ ALWAYS DO THIS INSTEAD:**
+```bash
+# Use feature branches
+git checkout -b fix/vcpkg-update-2025-11-27
+git push origin fix/vcpkg-update-2025-11-27
+
+# Update baseline to point to feature branch HEAD
+# In vcpkg-configuration.json:
+"baseline": "<commit-from-feature-branch>"
+```
+
+### Proper vcpkg Fork Update Workflow
+
+#### Option 1: Feature Branch (Recommended)
+```bash
+# 1. Create feature branch from microsoft/vcpkg
+cd vcpkg
+git fetch microsoft
+git checkout -b fix/update-2025-11-27 microsoft/master
+
+# 2. Cherry-pick your custom changes
+git cherry-pick <your-python-fix-commit>
+
+# 3. Push to fork
+git push origin fix/update-2025-11-27
+
+# 4. Get the commit hash
+BASELINE=$(git rev-parse HEAD)
+
+# 5. Update ApraPipes configuration
+cd ../base
+# Edit vcpkg-configuration.json with $BASELINE
+git commit -am "ci: Update vcpkg baseline to fix/update-2025-11-27"
+```
+
+#### Option 2: Git Tags (For Stable Baselines)
+```bash
+# Tag a specific commit
+cd vcpkg
+git tag baseline-2025-11-27-stable dfa17587b2
+git push origin baseline-2025-11-27-stable
+
+# Use the tag commit in configuration
+"baseline": "dfa17587b27fcb5642e74632e49b3f9775aa1c19"
+```
+
+#### Option 3: Overlay Ports (For Custom Packages)
+For small modifications, use vcpkg overlay-ports instead of forking:
+```yaml
+# vcpkg-configuration.json already has:
+"overlay-ports": [
+  "../thirdparty/custom-overlay"
+]
+
+# Put modified portfiles in thirdparty/custom-overlay/
+thirdparty/custom-overlay/
+  glib/
+    portfile.cmake
+    vcpkg.json
+```
+
+### Mistake Recovery: What If You Already Pushed to Master?
+
+If you accidentally pushed to fork's master branch:
+
+1. **Don't panic** - The damage is done but containable
+2. **Create a revert commit** (if master isn't protected):
+```bash
+git revert HEAD --no-edit
+git push origin master
+```
+
+3. **Or create a hotfix branch** from the previous good commit:
+```bash
+git checkout -b hotfix/restore-master <previous-good-commit>
+git push origin hotfix/restore-master
+# Ask repo owner to reset master to this commit
+```
+
+4. **Communicate**: Notify other users of the fork about the change
+5. **Use feature branch going forward**: Don't repeat the mistake
+
+### Real Example: Lessons from Build Failures
+
+**What Went Wrong**:
+1. Created baseline with commit `ae8fa5ae5e` (microsoft/vcpkg parent commit)
+2. That commit wasn't advertised by `git ls-remote` (parent commits aren't advertised)
+3. vcpkg couldn't fetch it → "no version database entry" errors
+4. **MISTAKE**: Merged to Apra-Labs/vcpkg master (should have used feature branch)
+5. Fixed by using merge commit `3011303ba1` (advertised)
+
+**Takeaway**: Always verify commits are advertised before using as baseline:
+```bash
+git ls-remote https://github.com/Apra-Labs/vcpkg.git | grep <commit-hash>
+```
+
+---
+
+## GitHub Actions Reference
+
+### Workflow Structure
+
+**Top-Level Workflows** (`.github/workflows/`):
+- `CI-Windows.yml` - Windows builds with CUDA
+- `CI-Linux.yml` - Linux x64 builds with CUDA + Docker
+- `CI-Linux-ARM64.yml` - Jetson ARM64 builds
+- `CI-MacOSX-NoCUDA.yml` - macOS builds
+
+**Reusable Workflows**:
+- `build-test.yml` - Unified Windows/Linux builds (called by CI-Windows.yml and CI-Linux.yml)
+- `build-test-lin.yml` - Linux-specific builds (called by CI-Linux-ARM64.yml)
+- `build-test-macosx.yml` - macOS-specific builds (called by CI-MacOSX-NoCUDA.yml)
+- `build-test-lin-container.yml` - Docker containerized builds (called by CI-Linux.yml docker job)
+- `CI-CUDA-Tests.yml` - GPU tests on self-hosted runners (called by cuda jobs)
+- `publish-test.yml` - Test result publishing and badge generation (called by report jobs)
+
+### Key Workflow Inputs
+
+| Input | Type | Description | Example Values |
+|-------|------|-------------|----------------|
+| `os` | string | Operating system | `linux`, `windows` |
+| `runner` | string | GitHub runner to use | `windows-latest`, `ubuntu-22.04`, `["self-hosted", "Linux", "ARM64"]` |
+| `flav` | string | Badge flavor name | `Windows`, `Linux`, `Linux_ARM64`, `MacOSX` |
+| `build_type` | string | CMake build type | `Release`, `RelWithDebInfo`, `Debug` |
+| `cuda` | string | Enable CUDA | `ON`, `OFF` |
+| `cuda_version` | string | CUDA toolkit version | `11.8.0`, `12.0.0` |
+| `is-selfhosted` | boolean | Skip caching if true | `true`, `false` |
+| `check_prefix` | string | Prefix for check run names | `CI-Win`, `CI-Lin`, `CI-ARM`, `CI-Mac` |
+
+### Workflow Triggers
+
+**Manual Trigger** (recommended during fixes):
+```yaml
+on:
+  workflow_dispatch:
+```
+
+**Automatic Triggers** (disabled during development):
+```yaml
+# on:
+#   push:
+#     branches: [ main ]
+#   pull_request:
+#     branches: [ main ]
+```
+
+### Runner Parameter for Container Workflows
+
+**CRITICAL**: When calling `build-test-lin-container.yml` which uses `fromJson(inputs.runner)`, the runner parameter MUST be a JSON-formatted string, not a plain string.
+
+```yaml
+# BAD - plain string causes silent job failure
+runner: ubuntu-22.04
+
+# GOOD - JSON array format
+runner: '["ubuntu-22.04"]'
+
+# GOOD - multiple labels for self-hosted
+runner: '["self-hosted", "Linux", "ARM64"]'
+```
+
+**Symptom:** Job silently doesn't run (not even shown as skipped), dependent jobs fail trying to download non-existent artifacts.
+
+### Cross-Workflow Check Runs
+
+`EnricoMi/publish-unit-test-result-action` creates GitHub check runs that are visible across ALL workflows for the same commit. A check named `Test Results Linux_ARM64` created by CI-Linux-ARM64 will appear in CI-Linux's check list.
+
+**Impact:** When CI-Linux shows "failure" with `Test Results Linux_ARM64` failing, it's actually a failure from CI-Linux-ARM64 workflow, not CI-Linux.
+
+**Solutions:**
+1. Prefix check names with workflow: `CI-Linux: Test Results` vs `CI-ARM64: Test Results`
+2. Use `check_run_annotations` parameter to control visibility
+3. Accept the behavior and check actual workflow run
+
+### Check Run Naming with Prefix
+
+Use `check_prefix` parameter to distinguish check runs from different workflows:
+
+```yaml
+# In publish-test.yml
+check_name: ${{ inputs.check_prefix != '' && format('{0}-Tests', inputs.check_prefix) || format('Test-Results-{0}', inputs.flav) }}
+```
+
+Results:
+- CI-Linux with `check_prefix: CI-Lin` → check name `CI-Lin-Tests`
+- CI-Windows with `check_prefix: CI-Win` → check name `CI-Win-Tests`
+- Fallback (no prefix) → `Test-Results-{flav}`
+
+### Job Naming Convention for Reusable Workflows
+
+When using reusable workflows, job names appear as `{caller-job} / {reusable-job}`. Use short, meaningful names:
+
+**Caller workflow (e.g., CI-Linux.yml):**
+```yaml
+jobs:
+  ci:  # Short top-level name
+    uses: ./.github/workflows/build-test.yml
+    with:
+      check_prefix: CI-Lin  # For check run naming
+```
+
+**Result in UI:**
+```
+ci
+├── build
+├── report
+├── cuda / setup
+├── cuda / gpu-test
+├── cuda / report
+├── docker / build
+└── docker-report
+```
+
+### Test Steps Must Exit 1 on Failure
+
+**CRITICAL**: Test execution steps must parse XML results and exit with code 1 if there are failures. Otherwise workflows show green when tests fail!
+
+```bash
+# BAD - swallows the error, workflow shows green
+./test_exe --log_format=JUNIT --log_sink=results.xml -p -l all || echo 'error'
+
+# GOOD - parse XML and fail on errors/failures
+./test_exe --log_format=JUNIT --log_sink=results.xml -p -l all
+TEST_EXIT=$?
+
+if [ -f "results.xml" ]; then
+  ERRORS=$(grep -oP 'errors="\K[0-9]+' results.xml | head -1)
+  FAILURES=$(grep -oP 'failures="\K[0-9]+' results.xml | head -1)
+  if [ "$ERRORS" -gt 0 ] || [ "$FAILURES" -gt 0 ]; then
+    echo "::error::Tests failed: $FAILURES failures, $ERRORS errors"
+    exit 1
+  fi
+fi
+```
+
+**Important:** Ensure `Upload test results` step has `if: always()` and `report` job has `if: always()` so results are published even when tests fail.
+
+### Verify CI Status Before Accepting
+
+Never trust "all passed" claims without verification:
+
+1. Run `gh run view <id> --json jobs` to see actual job status
+2. Check for jobs that didn't run (missing from list = potential silent failure)
+3. Look at actual test result annotations, not just job conclusions
+
+### CI Best Practices - Non-Regression Testing
+
+**CRITICAL RULE**: When making build system or devops changes, always validate that you don't regress other platforms.
+
+**Minimum Required Validation**:
+- For vcpkg/dependency changes: Test Windows NoCUDA + Linux NoCUDA (minimum 2 platforms)
+- For workflow changes: Test affected workflow only
+- For code changes: Test all relevant platforms (Windows + Linux at minimum)
+
+**Cost Management**:
+- **During development**: Disable automatic triggers (`workflow_dispatch` only)
+- **Test selectively**: Only trigger workflows you need to validate
+- **Cancel wasteful runs**: If auto-triggers fire accidentally, immediately cancel unnecessary builds
+- **Monitor actively**: Check builds every 5-10 minutes, don't leave builds running unnecessarily
+
+**Example Workflow**:
+1. Make vcpkg change (e.g., add dependency, update baseline)
+2. Manually trigger Windows NoCUDA build
+3. Monitor and fix any errors
+4. Manually trigger Linux NoCUDA build to validate cross-platform
+5. If Linux fails, fix and re-trigger ONLY Linux (not all 8 workflows)
+6. Once both pass, reinstate automatic triggers and merge
+
+**Anti-Pattern** (wasteful):
+```
+✗ Reinstating auto-triggers before validating
+✗ Letting all 8 workflows run when only testing 1 platform
+✗ Not canceling unnecessary builds
+✗ Triggering builds without monitoring them
+```
+
+**Efficient Pattern**:
+```
+✓ workflow_dispatch only during development
+✓ Test minimum required platforms
+✓ Cancel unnecessary auto-triggered builds immediately
+✓ Monitor builds actively, fix quickly
+✓ Reinstate auto-triggers only after validation
+```
+
+---
+
+## Cache Configuration
+
+### Cache Paths by Platform
+
+| Platform | Cache Path | Size Typical |
+|----------|------------|--------------|
+| Windows | `C:\Users\runneradmin\AppData\Local\vcpkg\archives` | 5-10 GB |
+| Linux | `~/.cache/vcpkg` or `${HOME}/.cache/vcpkg` | 5-10 GB |
+| Self-hosted | Not cached (persistent disk) | N/A |
+
+### Cache Key Structure
+
+**Current** (v5):
+```yaml
+key: ${{ inputs.flav }}-5-${{ hashFiles('base/vcpkg.json', 'vcpkg/baseline.json', 'submodule_ver.txt') }}
+restore-keys: ${{ inputs.flav }}-5-
+```
+
+**Components**:
+- `flav`: Platform identifier (Win-nocuda, Linux-x64-cuda, etc.)
+- `5`: Cache version (bump to invalidate all caches)
+- `hashFiles(...)`: Hash of files that affect dependencies
+
+**Files Hashed**:
+- `base/vcpkg.json`: Changes when dependencies added/removed
+- `vcpkg/baseline.json`: Changes when baseline updated
+- `submodule_ver.txt`: Changes when vcpkg submodule updated
+
+### Cache Invalidation
+
+**When to Bump Cache Version**:
+1. vcpkg-tools.json changed (e.g., Python version downgrade)
+2. Major vcpkg baseline update
+3. Cache corruption suspected
+4. Force rebuild of all packages
+
+**How to Bump**:
+Change `5` to `6` in cache key definition in `build-test-win.yml` or `build-test-linux.yml`.
+
+### Cache Behavior
+
+| Scenario | Result |
+|----------|--------|
+| Exact key match | Cache hit - fast restore |
+| Prefix match (restore-keys) | Partial hit - some packages cached |
+| No match | Cache miss - full build |
+| Phase 1 saves, Phase 2 restores | Expected flow |
+| Phase 2 before Phase 1 | Cache miss (run Phase 1 first) |
+
+### Force Cache Update
+
+Use `force-cache-update` when:
+1. **Cache corruption**: Incomplete or broken cached packages
+2. **Dependency upgrades**: Forcing rebuild with newer vcpkg package versions
+3. **Debugging**: Eliminating cache as source of build issues
+4. **Cache bloat**: Resetting to clean state
+
+**Mechanism**: When `force-cache-update: true`, the workflow:
+1. Restores cache (read-only operation)
+2. Deletes the restored cache from GitHub's cache storage
+3. Builds all packages fresh via CMake/vcpkg
+4. Saves new cache after configure completes
+
+**Triggering via GitHub UI**:
+1. Navigate to Actions tab
+2. Select workflow (e.g., "CI-Win-NoCUDA")
+3. Click "Run workflow"
+4. Check "Force cache rebuild" checkbox
+5. Click "Run workflow"
+
+**Permissions Required**:
+```yaml
+permissions:
+  actions: write  # For cache deletion via gh CLI
+  contents: read  # For checkout
+```
+
+### Cache Optimization Tip - Preserving Cache During Development
+
+**Problem**: Cache invalidates on every vcpkg.json change, causing hours of rebuilding the same packages repeatedly.
+
+**Solution**: During iterative development, remove `hashFiles()` from cache key to preserve cache across dependency changes.
+
+**Standard Cache Key** (production):
+```yaml
+key: ${{ inputs.flav }}-5-${{ hashFiles('base/vcpkg.json', 'vcpkg/baseline.json', 'submodule_ver.txt') }}
+restore-keys: ${{ inputs.flav }}-5-
+```
+
+**Optimized Cache Key** (development):
+```yaml
+key: ${{ inputs.flav }}-5
+restore-keys: ${{ inputs.flav }}-
+```
+
+**Benefits**:
+- Cache persists across vcpkg.json modifications
+- Adding/removing dependencies doesn't trigger full rebuild
+- Packages already built remain cached
+- Only new/changed packages rebuild
+
+**Trade-offs**:
+- Cache doesn't auto-invalidate on dependency changes
+- Must manually bump version number (5 → 6) when needed
+- Can accumulate stale packages over time
+
+**When to Use**:
+- ✓ During active development with frequent vcpkg.json changes
+- ✓ When iteratively fixing build issues across platforms
+- ✓ When adding multiple dependencies in sequence
+
+**When NOT to Use**:
+- ✗ On main branch (use hash-based invalidation)
+- ✗ When cache corruption suspected (bump version instead)
+- ✗ For production builds (want deterministic cache behavior)
+
+**Applies to**: All workflows with caching (Windows NoCUDA, Linux NoCUDA, etc.)
+
+---
+
+## Linking Static Dependencies
+
+### vcpkg.json vs CMakeLists.txt
+
+**Two separate requirements for using a package:**
+
+| Action | File | Purpose |
+|--------|------|---------|
+| Install package | `vcpkg.json` | Makes vcpkg download and build the library |
+| Link package | `CMakeLists.txt` | Tells linker to include library in executable |
+
+**Both are required.** Installing alone doesn't link it.
+
+### Transitive Dependencies in Static Builds
+
+**Problem**: vcpkg uses static libraries (`.a`). Static libs don't carry dependency info.
+
+**Example**:
+```
+Your executable → sfml-audio → libopenal.a → needs fmt
+```
+
+**What happens**:
+- OpenAL is compiled with fmt and has references to `fmt::vformat`
+- When linking statically, linker doesn't know OpenAL needs fmt
+- Result: `undefined reference to fmt::vformat`
+
+**Solution**: Explicitly link ALL transitive dependencies in CMakeLists.txt:
+
+```cmake
+find_package(SFML REQUIRED)
+find_package(fmt CONFIG REQUIRED)  # Even if you don't use fmt directly
+
+target_link_libraries(myapp
+  sfml-audio    # Direct dependency
+  fmt::fmt      # Transitive dependency (required by OpenAL, used by SFML)
+)
+```
+
+### Debugging Transitive Dependency Errors
+
+**Symptoms**: `undefined reference` errors during linking
+
+**Diagnosis steps**:
+1. Look at undefined symbol: `undefined reference to 'fmt::v12::vformat'`
+2. Check which `.a` file references it: `libopenal.a(alc.cpp.o)`
+3. Trace dependency chain: executable → sfml-audio → openal → fmt
+4. Add missing library to `target_link_libraries`
+
+**Quick check**:
+```bash
+# Find what libraries reference missing symbol
+grep -r "undefined reference" build.log
+# Example: /usr/bin/ld: vcpkg_installed/x64-linux/lib/libopenal.a(alc.cpp.o)
+```
+
+### Target-Specific Linking
+
+**Common mistake**: Adding library to wrong target
+
+```cmake
+# WRONG - linking to 'main' when 'aprapipesut' needs it
+target_link_libraries(main PRIVATE fmt::fmt)
+
+# RIGHT - link to the target that actually uses it
+target_link_libraries(aprapipesut PRIVATE fmt::fmt)
+```
+
+**Rule**: Link libraries to the specific executable/library target that uses them.
+
+---
+
+## Local Debugging Scripts
+
+The skill provides helper scripts in `.claude/skills/aprapipes-devops/scripts/` for local debugging of CI issues.
+
+### debug-cudnn-local.sh
+
+**Purpose**: Reproduce CI-Linux-CUDA environment locally to debug vcpkg/cuDNN issues
+
+**What it does**:
+- Runs `nvidia/cuda:11.8.0-devel-ubuntu22.04` Docker container (same as CI)
+- Installs all dependencies using same prep-cmd as CI workflow
+- Tests cuDNN package installation with vcpkg in isolation
+- Provides detailed logs for debugging
+
+**When to use**:
+- CI-Linux-CUDA workflow fails with cuDNN errors
+- vcpkg cudnn package installation issues
+- Need to debug CUDA library detection locally
+
+**Usage**:
+```bash
+./claude/skills/aprapipes-devops/scripts/debug-cudnn-local.sh
+```
+
+**Expected output**:
+- CUDA/cuDNN installation verification
+- vcpkg bootstrap logs
+- cuDNN package installation logs (saved to `/tmp/cudnn-install.log`)
+
+### test-gh-cache-delete.sh
+
+**Purpose**: Test GitHub Actions cache deletion logic locally before deploying to workflows
+
+**What it does**:
+- Installs GitHub CLI (gh) in Docker container
+- Tests cache key pattern matching with grep
+- Validates awk field extraction for cache IDs
+- Dry-run tests cache deletion patterns
+
+**When to use**:
+- Before implementing cache cleanup logic in workflows
+- Debugging cache key matching patterns
+- Testing `gh cache list` parsing logic
+
+**Usage**:
+```bash
+./claude/skills/aprapipes-devops/scripts/test-gh-cache-delete.sh
+```
+
+**Expected output**:
+- gh CLI installation verification
+- Pattern matching test results
+- Cache ID extraction validation
+
+---
+
+## Dependency Matrix
+
+### Core Dependencies (All Platforms)
+
+| Package | Purpose | Pinned? | Version |
+|---------|---------|---------|---------|
+| pkgconf | CMake FindPkgConfig support | No | Latest |
+| opencv4 | Computer vision (CUDA features) | No | Latest (4.x) |
+| boost-* | C++ utilities | No | Latest (1.x) |
+| ffmpeg | Video processing | **Yes** | 4.4.3 |
+| sfml | Audio/graphics | **Yes** | 2.6.2 |
+| libjpeg-turbo | Image codec | No | Latest |
+| zlib, bzip2, liblzma | Compression | No | Latest |
+
+### Platform-Specific Dependencies
+
+**Windows**:
+```json
+{ "name": "glib", "platform": "windows" }
+```
+
+**Linux x64**:
+```json
+{
+  "name": "glib",
+  "features": ["libmount"],
+  "platform": "(linux & x64)"
+}
+```
+
+**Excluded on ARM64**:
+```json
+{ "name": "hiredis", "platform": "!arm64" }
+{ "name": "redis-plus-plus", "platform": "!arm64" }
+```
+
+**Excluded on Windows**:
+```json
+{ "name": "gtk3", "platform": "!windows" }
+{ "name": "re", "platform": "!windows" }
+{ "name": "baresip", "platform": "!windows" }
+```
+
+### CUDA-Specific Features
+
+**OpenCV4 with CUDA**:
+```json
+{
+  "name": "opencv4",
+  "features": ["contrib", "cuda", "cudnn", "dnn", ...]
+}
+```
+
+**Whisper with CUDA**:
+```json
+{
+  "name": "whisper",
+  "features": ["cuda"]
+}
+```
+
+**Removed for NoCUDA builds**: `fix-vcpkg-json.ps1 -removeCUDA` strips CUDA features.
+
+---
+
+## vcpkg Fork Management
+
+### Repository Structure
+
+- **Upstream**: `https://github.com/microsoft/vcpkg.git`
+- **Fork**: `https://github.com/Apra-Labs/vcpkg.git`
+- **Custom Overlay**: `thirdparty/custom-overlay/` (for small modifications)
+
+### CRITICAL: Never Modify Master Branches
+
+**❌ NEVER**:
+```bash
+git checkout master
+git merge fix/my-changes
+git push origin master  # BREAKS OTHER BUILDS!
+```
+
+**✅ ALWAYS**:
+```bash
+git checkout -b fix/vcpkg-update-2024-11-28
+git push origin fix/vcpkg-update-2024-11-28
+# Use feature branch HEAD as baseline in vcpkg-configuration.json
+```
+
+### Baseline Commit Requirements
+
+A valid baseline commit MUST:
+1. Be advertised by `git ls-remote` (branch tip or tag)
+2. Exist in repository with version database (`versions/` directory)
+3. Be accessible without authentication
+
+**Verify Before Using**:
+```bash
+git ls-remote https://github.com/Apra-Labs/vcpkg.git | grep <commit-hash>
+```
+
+**Common Mistake**: Using parent commit (not advertised) → "not our ref" error
+
+---
+
+## File Locations Matrix
+
+| File/Directory | Windows (Hosted) | Linux (Hosted) | Self-Hosted |
+|----------------|------------------|----------------|-------------|
+| Workspace | `D:\a\ApraPipes\ApraPipes` | `/home/runner/work/ApraPipes` | Varies |
+| vcpkg cache | `C:\Users\runneradmin\AppData\Local\vcpkg\archives` | `~/.cache/vcpkg` | Not cached |
+| Build dir | `D:\a\ApraPipes\ApraPipes\build` | `/home/runner/work/ApraPipes/ApraPipes/build` | `./build` |
+| vcpkg installed | `{workspace}/vcpkg_installed` | Same | Same |
+| vcpkg buildtrees (logs) | `{workspace}/vcpkg/buildtrees` | Same | Same |
+| Temp | `D:\a\_temp` | `/tmp` | Varies |
+
+---
+
+## SSH Access to Self-Hosted Runners
+
+### OpenRPort Tunnel Configuration
+
+Both ARM64 (Jetson) and Windows CUDA self-hosted runners are accessible via OpenRPort SSH tunneling. **Note**: Ports change with each tunnel session - get current ports from user.
+
+### Connection Details
+
+| Runner | Host | Port Example | Username | Password | OS |
+|--------|------|--------------|----------|----------|-----|
+| **ARM64 Jetson** | `utubovyu.users.openrport.io` | `25965` (varies) | `developer` | (ask user) | Ubuntu 20.04 (JetPack 5.0+) |
+| **Windows CUDA** | `utubovyu.users.openrport.io` | `22179` (varies) | `administrator` | (ask user) | Windows 11 Pro |
+
+**Getting Current Ports**: Ports change with each OpenRPort tunnel session.
+Ask the system owner for current port mappings before attempting SSH connection.
+
+### Basic SSH Commands
+
+**ARM64 Jetson:**
+```bash
+sshpass -p '<password>' ssh -o StrictHostKeyChecking=no -p <port> developer@utubovyu.users.openrport.io
+```
+
+**Windows CUDA:**
+```bash
+sshpass -p '<password>' ssh -o StrictHostKeyChecking=no -p <port> administrator@utubovyu.users.openrport.io
+```
+
+### Remote Command Execution
+
+**Single command:**
+```bash
+# ARM64 - Check build progress
+sshpass -p '<password>' ssh -o StrictHostKeyChecking=no -p <port> developer@utubovyu.users.openrport.io \
+  'tail -100 /mnt/disks/actions-runner/_work/_diag/*.log | grep -E "(Installing|installed)" | tail -5'
+
+# Windows - Check system info
+sshpass -p '<password>' ssh -o StrictHostKeyChecking=no -p <port> administrator@utubovyu.users.openrport.io \
+  'systeminfo | findstr /B /C:"OS Name" /C:"OS Version"'
+```
+
+**Multi-line PowerShell scripts (Windows):**
+```bash
+sshpass -p '<password>' ssh -o StrictHostKeyChecking=no -p <port> administrator@utubovyu.users.openrport.io \
+  'powershell -Command "Get-Process | Where-Object {$_.ProcessName -like \"*runner*\"} | Select-Object ProcessName,Id,CPU"'
+```
+
+### Common Remote Tasks
+
+**Check runner status (ARM64):**
+```bash
+sshpass -p '<password>' ssh -o StrictHostKeyChecking=no -p <port> developer@utubovyu.users.openrport.io \
+  'ps aux | grep actions-runner'
+```
+
+**Check vcpkg build progress (ARM64):**
+```bash
+sshpass -p '<password>' ssh -o StrictHostKeyChecking=no -p <port> developer@utubovyu.users.openrport.io \
+  'tail -50 /mnt/disks/actions-runner/_work/_diag/*.log'
+```
+
+**Check disk space (ARM64):**
+```bash
+sshpass -p '<password>' ssh -o StrictHostKeyChecking=no -p <port> developer@utubovyu.users.openrport.io \
+  'df -h /mnt/disks/actions-runner'
+```
+
+**Check runner status (Windows):**
+```bash
+sshpass -p '<password>' ssh -o StrictHostKeyChecking=no -p <port> administrator@utubovyu.users.openrport.io \
+  'powershell -Command "Get-Service | Where-Object {$_.DisplayName -like \"*GitHub Actions*\"}"'
+```
+
+**Check CUDA version (Windows):**
+```bash
+sshpass -p '<password>' ssh -o StrictHostKeyChecking=no -p <port> administrator@utubovyu.users.openrport.io \
+  'nvcc --version'
+```
+
+### Security Notes
+
+- **Credentials stored in clear text**: These SSH credentials are for development/CI purposes only
+- **OpenRPort tunneling**: Connections are tunneled through OpenRPort server
+- **StrictHostKeyChecking disabled**: For automation purposes (accepts host key automatically)
+- **Change default passwords**: Consider rotating passwords if exposing beyond CI environment
+
+---
+
+## Common Commands Quick Reference
+
+### GitHub CLI
+
+```bash
+# Workflow operations
+gh workflow list
+gh workflow run <workflow-name> --ref <branch>
+gh workflow enable/disable <workflow-name>
+
+# Run operations
+gh run list --workflow=<workflow-name> --limit 10
+gh run view <run-id>
+gh run view <run-id> --log > build.log
+gh run watch <run-id>
+gh run cancel <run-id>
+gh run download <run-id>  # Download artifacts
+```
+
+### vcpkg
+
+```bash
+# Bootstrap
+./vcpkg/bootstrap-vcpkg.bat  # Windows
+./vcpkg/bootstrap-vcpkg.sh   # Linux
+
+# Package operations
+./vcpkg/vcpkg install --triplet x64-windows
+./vcpkg/vcpkg list
+./vcpkg/vcpkg remove <package>
+./vcpkg/vcpkg update
+
+# Diagnostics
+cat vcpkg_installed/vcpkg/status  # Installed packages
+ls vcpkg/buildtrees/  # Build logs by package
+```
+
+### CMake
+
+```bash
+# Configure
+cmake -B build \
+  -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DENABLE_CUDA=OFF
+
+# Build
+cmake --build build --config Release -j 6
+
+# Test
+cd build
+ctest -C Release -V
+```
+
+### Disabling Tests
+
+**Use Boost Test decorators, NOT commenting out in CMakeLists.txt:**
+
+```cpp
+// Disable a test case
+BOOST_AUTO_TEST_CASE(my_test, *boost::unit_test::disabled())
+
+// Disable entire test suite
+BOOST_AUTO_TEST_SUITE(my_suite, *boost::unit_test::disabled())
+```
+
+**Why**: Tests remain compiled but skipped at runtime. Commenting in CMakeLists.txt should only be used for tests that won't compile at all.
+
+### Log Analysis
+
+```bash
+# Download logs
+gh run view <run-id> --log > /tmp/build.log
+
+# Find errors
+grep -i "error:" /tmp/build.log
+grep "CMake Error" /tmp/build.log
+grep "failed with" /tmp/build.log
+
+# Find specific issues
+grep -i "distutils\|python" /tmp/build.log
+grep "unexpected hash" /tmp/build.log
+grep "PKG_CONFIG" /tmp/build.log
+grep "not our ref" /tmp/build.log
+
+# Check Phase 1 vs Phase 2
+grep "win-nocuda-build-prep" /tmp/build.log  # Phase 1
+grep "win-nocuda-build-test" /tmp/build.log  # Phase 2
+```
+
+---
+
+## Environment Variables
+
+### Common Across Platforms
+
+| Variable | Purpose | Example Value |
+|----------|---------|---------------|
+| `CMAKE_TOOLCHAIN_FILE` | vcpkg CMake integration | `{workspace}/vcpkg/scripts/buildsystems/vcpkg.cmake` |
+| `VCPKG_ROOT` | vcpkg installation | `{workspace}/vcpkg` |
+| `CMAKE_BUILD_TYPE` | Build configuration | `Release`, `Debug` |
+
+### Windows-Specific
+
+| Variable | Purpose | Example Value |
+|----------|---------|---------------|
+| `CUDA_HOME` | CUDA toolkit location | `c:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8` |
+| `CUDA_PATH` | CUDA bin directory | `{CUDA_HOME}\bin` |
+
+### Linux-Specific
+
+| Variable | Purpose | Example Value |
+|----------|---------|---------------|
+| `PKG_CONFIG_PATH` | pkg-config search path | `/usr/lib/pkgconfig` |
+
+### Jetson-Specific
+
+| Variable | Purpose | Example Value |
+|----------|---------|---------------|
+| `VCPKG_FORCE_SYSTEM_BINARIES` | Force using system binaries on ARM64 | `1` |
+
+---
+
+## Version Information
+
+**vcpkg Baseline**: `3011303ba1f6586e8558a312d0543271fca072c6`
+**Python Version**: 3.10.11
+**CMake Version**: 3.29.6
+**Cache Version**: 5
+
+---
+
+## Operational Wisdom
+
+Non-obvious patterns learned from production experience.
+
+### Git Branch Naming
+
+**Problem:** A branch named `docs` prevents creating `docs/anything` due to Git ref namespace rules.
+
+**Rule:** Never create single-word branches that could be prefixes. Use descriptive names:
+- `docs-cleanup` not `docs`
+- `fix-cuda-build` not `fix`
+- `feature-auth` not `feature`
+
+### Documentation-Only Changes
+
+**Problem:** Workflows lack `paths-ignore` filters, so docs-only changes trigger full CI builds (8+ platforms, ~20 compute-hours wasted).
+
+**Workaround:** After pushing docs-only branches, immediately cancel all triggered runs:
+```bash
+gh run list --branch <branch> --status in_progress --json databaseId -q '.[].databaseId' | xargs -I{} gh run cancel {}
+```
+
+### Include Style for System Headers
+
+**Rule:** Use angle brackets `<>` for SDK/system headers, quotes `""` for project headers.
+
+```cpp
+#include <nvjpeg.h>           // CUDA SDK header - angle brackets
+#include <nvbufsurface.h>     // JetPack header - angle brackets
+#include "MyProjectHeader.h"  // Project header - quotes
+```
+
+**Why:** Some build configurations have different include paths for system vs. project headers. Using the wrong style can cause "file not found" errors on specific platforms.
+
+### Self-Hosted Runner API Visibility
+
+**Problem:** Org-level runners don't appear in repo-level API calls.
+
+```bash
+# This returns empty even when runners exist:
+gh api repos/Apra-Labs/ApraPipes/actions/runners
+
+# Must check GitHub web UI:
+# Settings → Actions → Runners
+```
+
+### Exit Code Propagation in Scripts
+
+**Anti-pattern:**
+```bash
+$TEST_EXE ... || echo "Tests failed"  # Swallows exit code!
+```
+
+**Correct:**
+```bash
+$TEST_EXE ...  # Preserves exit code
+```
+
+**Rule:** Never use `|| echo` or `|| true` after test commands - it hides failures from CI.
+
+### Concurrent Build Constraints
+
+**Rule:** Don't run concurrent builds on resource-constrained runners (Jetson, some self-hosted).
+
+**Why:** Parallel builds cause OOM kills. The runner may appear to hang or produce cryptic errors.
+
+**Mitigation:** Use workflow concurrency groups:
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+```

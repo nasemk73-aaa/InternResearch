@@ -1,0 +1,8 @@
+---
+description: Cursor Operational Doctrine
+globs: 
+alwaysApply: true
+---
+# Cursor Operational Doctrine
+
+@docs/agents/OperationalDoctrine.md

@@ -1,0 +1,11 @@
+{
+  "name": "core",
+  "version": "1.12.4",
+  "description": "Clipboard's core development tools.",
+  "author": {
+    "name": "Clipboard",
+    "url": "https://github.com/ClipboardHealth"
+  },
+  "repository": "https://github.com/ClipboardHealth/core-utils",
+  "license": "MIT"
+}

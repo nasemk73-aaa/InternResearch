@@ -1,0 +1,7 @@
+---
+description: Cursor Rules Location
+globs: *.mdc
+alwaysApply: false
+---
+# Cursor Rules Location
+Cursor rule files (.mdc) must be placed in the /.cursor/rules/ directory, use kebab-case with descriptive names. Never place them in the root or outside of .cursor/rules
